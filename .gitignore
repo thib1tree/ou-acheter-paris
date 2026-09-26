@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+
+# Contours et gares telecharges automatiquement (regenerables)
+data/cache/
+
+.DS_Store
+
+# Site statique construit par scripts/construire_site.py (jamais versionne)
+dist/

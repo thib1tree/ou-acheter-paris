@@ -1,0 +1,9 @@
+MapLibre GL JS 4.7.1 — https://github.com/maplibre/maplibre-gl-js
+Licence 3-Clause BSD (texte complet en tete de maplibre-gl.js).
+
+Fichiers repris tels quels depuis le paquet npm `maplibre-gl@4.7.1`
+(`dist/maplibre-gl.js` et `dist/maplibre-gl.css`).
+
+Versionnes plutot que charges depuis un CDN : l'application doit demarrer sur
+un poste sans acces reseau autre que les tuiles du fond de carte, et un CDN
+indisponible rendrait la carte entierement blanche.

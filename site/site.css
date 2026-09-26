@@ -1,0 +1,185 @@
+/* La page du site statique : un en-tete discret, le panneau des filtres, la
+ * carte, et une ligne de provenance. La carte elle-meme a sa feuille
+ * (`carte/carte.css`) ; celle-ci ne dispose que ce qui l'entoure.
+ *
+ * **La carte est la page.** Sur grand ecran, le panneau tient a gauche et la
+ * carte prend tout le reste. Sur telephone, la carte prend tout l'ecran et le
+ * panneau devient un tiroir, ouvert par une pastille qui dit ce qu'elle
+ * ouvre : « Filtres ». */
+
+:root {
+  --rouge: #bd0026;
+  --texte: #1f1f1f;
+  --discret: #666;
+  --trait: #d6d6d6;
+  --panneau: 300px;
+}
+
+body {
+  display: grid;
+  grid-template-columns: var(--panneau) 1fr;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas: "entete entete" "panneau carte" "pied pied";
+  height: 100vh;
+  height: 100dvh;
+  background: #fff;
+  color: var(--texte);
+  font-size: 14px;
+}
+
+#entete {
+  grid-area: entete;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--trait);
+}
+#titres { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+#entete h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: .01em; white-space: nowrap; }
+/* Le sous-titre dit d'ou viennent les chiffres, sans les disputer au titre. */
+#sous-titre { margin: 0; font-size: 12px; color: var(--discret); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+#bouton-filtres {
+  display: none;
+  align-items: center;
+  gap: .3rem;
+  background: var(--rouge);
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  padding: .35rem .9rem;
+  font: inherit;
+  font-size: .85rem;
+  font-weight: 600;
+  box-shadow: 0 1px 6px rgba(0,0,0,.28);
+  cursor: pointer;
+}
+#bouton-filtres::before { content: "☰"; font-weight: 400; }
+/* Un appel discret, au tout premier affichage : il s'arrete de lui-meme au
+   bout de quelques battements, et des qu'on a ouvert les filtres. */
+@keyframes appel {
+  0%, 100% { box-shadow: 0 1px 6px rgba(0,0,0,.28); }
+  50% { box-shadow: 0 0 0 9px rgba(189,0,38,.22), 0 1px 6px rgba(0,0,0,.28); }
+}
+#bouton-filtres.appel { animation: appel 1.5s ease-in-out 5; }
+
+#panneau {
+  grid-area: panneau;
+  overflow-y: auto;
+  padding: 12px 16px 20px;
+  border-right: 1px solid var(--trait);
+  background: #fafafa;
+}
+.panneau-tete { display: flex; align-items: center; justify-content: space-between; }
+.panneau-tete h2 { font-size: 16px; margin: 4px 0 8px; }
+#fermer-panneau { display: none; border: 0; background: transparent; font-size: 26px;
+  line-height: 1; padding: 4px 8px; cursor: pointer; color: var(--discret); }
+
+#panneau fieldset { border: 0; padding: 0; margin: 0 0 16px; min-width: 0; }
+#panneau legend { font-weight: 600; margin-bottom: 6px; padding: 0; }
+#panneau .aide { color: var(--discret); font-size: 12px; margin: 5px 0 0; line-height: 1.35; }
+
+.boutons { display: flex; flex-wrap: wrap; gap: 4px; }
+/* Les annees en entier, sur une seule ligne tant qu'elles tiennent : elles se
+   partagent la largeur plutot que de passer a la ligne a la cinquieme. */
+.boutons button {
+  flex: 1 1 0; font: inherit; font-variant-numeric: tabular-nums;
+  min-width: 0; padding: 6px 2px; border-radius: 6px;
+  border: 1px solid #bbb; background: #fff; color: #333; cursor: pointer;
+}
+.boutons button[aria-pressed="true"] { background: var(--rouge); border-color: var(--rouge); color: #fff; }
+
+.bornes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.bornes label { display: flex; flex-direction: column; font-size: 12px; color: var(--discret); gap: 3px; }
+.bornes input { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid #bbb;
+  border-radius: 6px; width: 100%; box-sizing: border-box; color: var(--texte); }
+
+.cases label { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
+.cases input { width: 16px; height: 16px; accent-color: var(--rouge); }
+
+#alertes:empty { display: none; }
+#alertes .alerte { background: #fff4e5; border: 1px solid #f0c27b; border-radius: 6px;
+  padding: 8px 10px; margin-bottom: 12px; font-size: 13px; line-height: 1.4; }
+
+#a-propos { margin-top: 20px; font-size: 13px; color: #444; line-height: 1.45; }
+#a-propos summary { cursor: pointer; color: var(--discret); }
+
+#zone-carte { grid-area: carte; position: relative; overflow: hidden; min-height: 0; }
+/* Recalcul en cours : la carte garde ses couleurs, et le dit. */
+#calcul { position: absolute; z-index: 7; bottom: 74px; left: 50%; transform: translateX(-50%);
+  background: rgba(255,255,255,.94); border: 1px solid #c9c9c9; border-radius: 6px;
+  padding: 6px 12px; font-size: 12px; color: #444; pointer-events: none; }
+
+#pied {
+  grid-area: pied;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--discret);
+  padding: 5px 16px;
+  border-top: 1px solid var(--trait);
+  /* Sans cela, la ligne de provenance (insecable) elargirait la grille entiere
+     sur un ecran etroit, au lieu de se couper par des points de suspension. */
+  min-width: 0;
+  overflow: hidden;
+}
+#pied-source { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#pied a { color: inherit; }
+/* Le depot du code : une icone, a droite de la ligne de provenance. La zone
+   cliquable deborde l'icone pour se viser au doigt. */
+#depot { display: inline-flex; flex: none; padding: 4px; margin: -4px -4px -4px 0;
+  color: #444; border-radius: 4px; }
+#depot:hover, #depot:focus-visible { color: var(--texte); background: #eee; }
+#a-propos ul { padding-left: 18px; margin: 4px 0 8px; }
+#a-propos li { margin-bottom: 3px; }
+
+/* ---------------------------------------------------------------- Telephone
+   La carte prend tout l'ecran sous une bande etroite : la pastille « Filtres »
+   et le titre. La ligne de provenance reste a portee de pouce sous la carte. */
+/* Telephone, en portrait comme en paysage : en paysage, la hauteur manque plus
+   que la largeur, et un panneau fixe ne laisserait qu'une bande de carte. */
+@media (max-width: 640px), (max-height: 500px) {
+  body {
+    grid-template-columns: 1fr;
+    grid-template-areas: "entete" "carte" "pied";
+    font-size: 15px;
+  }
+  /* `min-width: 0` : sans lui, le titre insecable elargirait la grille. */
+  #entete { padding: 6px 10px; border-bottom: 0; gap: 10px; min-width: 0; }
+  /* Le titre reste, a droite de la pastille « Filtres » : plus petit, et
+     coupe par des points de suspension plutot que sur deux lignes ; le
+     sous-titre dessous, reduit a la source des chiffres. */
+  #titres { order: 2; flex: 1; flex-direction: column; align-items: flex-start; gap: 0; }
+  #titres > * { max-width: 100%; }
+  #entete h1 { font-size: 15px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; }
+  #sous-titre { font-size: 11px; line-height: 1.2; }
+  #sous-titre .suite { display: none; }
+  #bouton-filtres { display: inline-flex; }
+  #pied { padding: 3px 10px calc(3px + env(safe-area-inset-bottom)); font-size: 11px; gap: 8px; }
+
+  /* Le panneau ouvert couvre l'ecran : a moitie deploye sur la carte, on ne
+     lirait ni l'un ni l'autre. */
+  #panneau {
+    position: fixed; z-index: 20; top: 0; bottom: 0; left: 0;
+    width: 88vw; max-width: 380px; box-sizing: border-box;
+    border-right: 0; box-shadow: 4px 0 18px rgba(0,0,0,.3);
+    transform: translateX(-105%); transition: transform .2s ease-out;
+    padding-top: calc(12px + env(safe-area-inset-top));
+  }
+  body.filtres-ouverts #panneau { transform: none; }
+  #fermer-panneau { display: block; }
+  .boutons button { padding: 9px 2px; }
+  .bornes input { font-size: 16px; }
+}
+
+/* ------------------------------------------------------ Telephone en paysage
+   Une seule ligne pour le titre et son sous-titre : chaque pixel de hauteur
+   est une ligne de carte. */
+@media (max-height: 500px) and (min-width: 641px) {
+  #titres { flex-direction: row; align-items: baseline; gap: 10px; }
+  #sous-titre .suite { display: inline; }
+  #pied { padding-top: 2px; padding-bottom: 2px; }
+}

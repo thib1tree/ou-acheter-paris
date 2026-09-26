@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<!-- `user-scalable=no` : le pincement doit zoomer la *carte*, pas la page. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>{{nom_site}}</title>
+<meta name="description" content="Où acheter autour de Paris ? Carte gratuite des prix de vente réels des logements, quartier par quartier et vente par vente, avec les gares actuelles et à venir. Données publiques DVF des cinq dernières années." />
+<meta name="theme-color" content="#bd0026" />
+<!-- Remplis a la construction (`scripts/construire_site.py`) quand l'adresse
+     publique du site est connue ; retires sinon. -->
+<!--adresse-->
+<link rel="canonical" href="{{adresse}}" />
+<meta property="og:url" content="{{adresse}}" />
+<meta property="og:image" content="{{adresse}}partage.png" />
+<meta name="twitter:image" content="{{adresse}}partage.png" />
+<!--/adresse-->
+<meta property="og:type" content="website" />
+<meta property="og:locale" content="fr_FR" />
+<meta property="og:site_name" content="{{nom_site}}" />
+<meta property="og:title" content="{{nom_site}}" />
+<meta property="og:description" content="Les prix de vente réels des logements autour de Paris, quartier par quartier et rue par rue, avec les gares actuelles et à venir. Données publiques DVF {{annee_debut}}-{{annee_fin}}. Gratuit, sans publicité, code ouvert." />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Carte de l'agglomération parisienne colorée selon le prix médian au m² des logements vendus" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="icone-180.png" />
+<link rel="manifest" href="site.webmanifest" />
+<script type="application/ld+json">{{json_ld}}</script>
+<link rel="stylesheet" href="carte/vendor/maplibre-gl.css" />
+<link rel="stylesheet" href="carte/carte.css" />
+<link rel="stylesheet" href="site.css" />
+</head>
+<body>
+<header id="entete">
+  <div id="titres">
+    <h1>{{nom_site}}</h1>
+    <p id="sous-titre">Prix de vente réels {{annee_debut}}-{{annee_fin}} (DVF)<span class="suite"> · gares actuelles et à venir</span></p>
+  </div>
+  <!-- Sur telephone, le seul chemin vers les reglages : il dit ce qu'il ouvre. -->
+  <button type="button" id="bouton-filtres" aria-controls="panneau" aria-expanded="false">Filtres</button>
+</header>
+
+<aside id="panneau" aria-label="Filtres">
+  <div class="panneau-tete">
+    <h2>Filtres</h2>
+    <button type="button" id="fermer-panneau" aria-label="Fermer les filtres">×</button>
+  </div>
+  <div id="alertes" role="status" aria-live="polite"></div>
+
+  <fieldset id="filtre-annees">
+    <legend>Années</legend>
+    <div class="boutons" role="group" aria-label="Années"></div>
+    <p class="aide">« 21 » pour 2021. Chaque année se coche ou se décoche indépendamment des autres.</p>
+  </fieldset>
+
+  <fieldset id="filtre-surface">
+    <legend>Surface habitable (m²)</legend>
+    <div class="bornes">
+      <label>Minimum <input type="number" id="surface-min" inputmode="numeric" min="0" step="5" value="0" /></label>
+      <label>Maximum <input type="number" id="surface-max" inputmode="numeric" min="0" step="5" /></label>
+    </div>
+    <p class="aide" id="surface-rappel"></p>
+  </fieldset>
+
+  <fieldset id="filtre-types">
+    <legend>Type de bien</legend>
+    <div class="cases"></div>
+  </fieldset>
+
+  <p id="etat-calcul" class="aide" hidden></p>
+
+  <details id="a-propos">
+    <summary>À propos</summary>
+    <p><b>Une réutilisation de données publiques, à but non lucratif.</b>
+    Ce site met en carte le jeu de données
+    <a href="{{url_jeu}}" rel="noopener" target="_blank">Demandes de valeurs
+    foncières géolocalisées</a>, publié sur data.gouv.fr par Etalab à partir des
+    fichiers de la DGFiP, sous <a href="{{url_licence}}" rel="noopener"
+    target="_blank">Licence Ouverte 2.0</a>. Il n'est ni édité ni validé par
+    l'administration ; il est gratuit, sans publicité et sans compte.</p>
+
+    <p><b>Le jeu de données.</b> Chaque vente immobilière enregistrée par les
+    services de publicité foncière : date, prix, nature et surface des biens,
+    adresse, parcelle cadastrale et position sur la carte. Il est republié deux
+    fois par an ; la carte couvre les ventes du {{debut}} au {{fin}}.</p>
+
+    <p><b>Ce qui est retenu.</b></p>
+    <ul>
+      <li>les {{nb_communes}} communes de l'unité urbaine de Paris (INSEE) ;</li>
+      <li>les ventes, y compris sur plan (VEFA) — pas les échanges, adjudications
+      ni expropriations ;</li>
+      <li>les appartements et les maisons. Une vente de plusieurs lots compte une
+      fois : caves et parkings sont dans le prix, pas dans la surface ;</li>
+      <li>sont écartées les ventes qui comprennent un local commercial, celles de
+      {{seuil_bloc}} logements ou plus (ventes en bloc), et les prix
+      invraisemblables : moins de {{valeur_min}} €, moins de {{prix_min}} ou plus
+      de {{prix_max}} € le m², moins de {{surface_min}} m².</li>
+    </ul>
+    <p>Restent {{nb_ventes}} ventes. Une zone de moins de {{ventes_min}} ventes est
+    grisée : sa médiane dépendrait du hasard d'un ou deux biens.
+    <a href="{{url_depot}}" rel="noopener" target="_blank">Le code et
+    les sources</a>.</p>
+
+    <p><b>Autres sources</b> : contours cadastraux (Etalab), gares en service et
+    à venir (Île-de-France Mobilités, actualisées chaque mois), fonds de carte
+    Esri, OpenStreetMap et IGN.</p>
+
+    <p>Aucune donnée personnelle n'est collectée par ce site.</p>
+  </details>
+</aside>
+
+<main id="zone-carte">
+  <div id="carte"></div>
+  <div id="etiquettes"></div>
+  <div id="infobulle" hidden></div>
+  <div id="mode" class="controle" role="group" aria-label="Mode de lecture">
+    <button type="button" data-mode="communes" title="Communes de loin, pâtés de maisons (sections cadastrales) en zoomant">Auto</button>
+    <button type="button" data-mode="sections" title="Pâtés de maisons (sections cadastrales) à toutes les échelles">Détail</button>
+  </div>
+  <div id="reglages" class="controle">
+    <label class="reglage">
+      <span>Métrique</span>
+      <select id="choix-metrique" aria-label="Métrique affichée"></select>
+    </label>
+    <label class="reglage">
+      <span>Fond</span>
+      <select id="choix-fond" aria-label="Fond de carte"></select>
+    </label>
+    <!-- Aller a une commune : les noms sont ceux de la carte, rien ne part
+         vers un service de recherche. -->
+    <label class="reglage recherche">
+      <span>Aller à</span>
+      <input type="search" id="aller-a" list="liste-communes" placeholder="Une commune…"
+             autocomplete="off" enterkeyhint="go" aria-label="Aller à une commune" />
+    </label>
+    <datalist id="liste-communes"></datalist>
+  </div>
+  <!-- Ce que le zoom reserve : il s'efface une fois les ventes atteintes. -->
+  <button type="button" id="indice-zoom" class="controle" hidden>
+    <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6.5 1a5.5 5.5 0 0 1 4.38 8.83l3.65 3.64-1.06 1.06-3.64-3.65A5.5 5.5 0 1 1 6.5 1zm0 1.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM6 4.5h1v1.5h1.5v1H7v1.5H6V7H4.5V6H6z"/></svg>
+    <span></span>
+  </button>
+  <button type="button" id="legende-bascule" class="controle" aria-expanded="true"
+          aria-controls="legende">Légende</button>
+  <div id="legende" class="controle" hidden></div>
+  <div id="attente" hidden>Chargement des contours…</div>
+  <div id="calcul" role="status" hidden></div>
+</main>
+
+<footer id="pied">
+  <span id="pied-source">Données : DVF géolocalisées, DGFiP / Etalab, Licence Ouverte 2.0.</span>
+  <a id="depot" href="{{url_depot}}" rel="noopener" target="_blank"
+     title="Code source sur GitHub" aria-label="Code source sur GitHub">
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+  </a>
+</footer>
+
+<script src="hote.js"></script>
+<script src="carte/vendor/maplibre-gl.js"></script>
+<script src="carte/carte.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

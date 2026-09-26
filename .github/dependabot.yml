@@ -1,0 +1,14 @@
+# Les actions des workflows sont épinglées par empreinte de commit : une
+# étiquette (`v4`) se déplace, une empreinte non. Dependabot propose chaque
+# mois une pull request quand une nouvelle version paraît.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3

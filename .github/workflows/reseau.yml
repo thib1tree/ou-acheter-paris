@@ -1,0 +1,138 @@
+# Actualisation mensuelle des gares (data/geo/gares.json).
+#
+# Les gares ne sont téléchargées qu'une fois, puis versionnées : la
+# construction du site ne dépend ainsi d'aucun serveur. Sans ce workflow, une
+# gare mise en service resterait affichée « à venir » pour toujours.
+#
+# Chaque mois, il retélécharge les gares en service et les arrêts en projet
+# d'Île-de-France Mobilités, les réconcilie (une ligne annoncée qui roule
+# désormais n'est plus « à venir »), puis :
+#
+# - rien n'a changé : il s'arrête là ;
+# - du neuf : il reconstruit le site, lance tous les tests et ouvre une pull
+#   request qui liste les lignes ouvertes et annoncées. Il ne reste qu'à
+#   vérifier la prévisualisation et fusionner ;
+# - un échec : il ouvre une issue (étiquette mise-a-jour-donnees).
+#
+# Même jeton que la mise à jour des données (JETON_MISE_A_JOUR, voir le
+# README), pour que la CI se lance sur la pull request.
+name: Actualisation des gares
+
+on:
+  schedule:
+    # Le 10 de chaque mois à 5 h 41 UTC.
+    - cron: "41 5 10 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: actualisation-gares
+  cancel-in-progress: false
+
+jobs:
+  actualiser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          token: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Dépendances
+        run: pip install -r requirements-dev.txt
+
+      - name: Gares d'aujourd'hui
+        id: gares
+        run: |
+          set -o pipefail
+          python scripts/actualiser_gares.py --resume "$RUNNER_TEMP/description.md" \
+            2>&1 | tee -a "$RUNNER_TEMP/journal.txt"
+          cat "$RUNNER_TEMP/description.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Branche d'actualisation
+        id: branche
+        if: steps.gares.outputs.change == 'oui'
+        run: |
+          branche="reseau/$(date -u +%Y-%m)-$(sha256sum data/geo/gares.json | cut -c1-8)"
+          echo "nom=$branche" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --heads origin "$branche" > /dev/null; then
+            echo "::notice title=Déjà proposé::La branche $branche existe : sa pull request attend une relecture."
+          else
+            echo "lancer=oui" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Construction du site
+        if: steps.branche.outputs.lancer == 'oui'
+        run: |
+          set -o pipefail
+          python scripts/construire_site.py --sortie dist 2>&1 | tee -a "$RUNNER_TEMP/journal.txt"
+
+      - name: Navigateur des tests de bout en bout
+        if: steps.branche.outputs.lancer == 'oui'
+        run: python -m playwright install --with-deps chromium
+
+      - name: Tests
+        if: steps.branche.outputs.lancer == 'oui'
+        env:
+          DVF_RESEAU: "0"
+          NAVIGATEUR_OBLIGATOIRE: "1"
+        run: |
+          set -o pipefail
+          python -m pytest -q 2>&1 | tee -a "$RUNNER_TEMP/journal.txt"
+
+      - name: Pull request
+        if: steps.branche.outputs.lancer == 'oui'
+        env:
+          BRANCHE: ${{ steps.branche.outputs.nom }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          titre="Gares : actualisation du $(date -u +%d/%m/%Y)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCHE"
+          git add data/geo/gares.json
+          git commit -q -m "$titre"
+          git push -u origin "$BRANCHE"
+          gh pr create --base "$BASE" --head "$BRANCHE" --title "$titre" \
+            --body-file "$RUNNER_TEMP/description.md"
+
+      - name: Issue en cas d'échec
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "L'actualisation automatique des gares a échoué : $RUN"
+            echo
+            echo "Dernières lignes du journal :"
+            echo
+            echo '```'
+            tail -n 150 "$RUNNER_TEMP/journal.txt" 2>/dev/null || echo "(journal vide)"
+            echo '```'
+          } > "$RUNNER_TEMP/issue.md"
+          gh label create mise-a-jour-donnees --color B60205 \
+            --description "Échec de la mise à jour automatique des données" 2>/dev/null || true
+          existante=$(gh issue list --label mise-a-jour-donnees --state open --json number --jq '.[0].number')
+          if [ -n "$existante" ]; then
+            gh issue comment "$existante" --body-file "$RUNNER_TEMP/issue.md"
+          else
+            gh issue create --title "Actualisation des gares en échec" --label mise-a-jour-donnees \
+              --body-file "$RUNNER_TEMP/issue.md"
+          fi

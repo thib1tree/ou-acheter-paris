@@ -2,4 +2,4 @@
 -r requirements.txt
 pytest>=7.0,<10
 pyflakes>=3,<4
-playwright>=1.49,<2     # tests/test_navigateur.py
+playwright>=1.63.0,<2     # tests/test_navigateur.py

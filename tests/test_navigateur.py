@@ -244,7 +244,7 @@ def test_le_pied_de_page_cite_la_source_et_la_periode_lue_dans_les_donnees(burea
 def test_la_carte_s_affiche_sans_fond_de_carte(bureau):
     """Aucune tuile de fond n'arrive ici : zones, gares et boutons sont la quand meme."""
 
-    for couche in ("zones-communes", "zones-sections", "transactions", "gares", "gares-projet"):
+    for couche in ("zones-communes", "zones-sections", "transactions", "gares", "gares-projet", "trajet"):
         assert bureau.carte("(carte, id) => !!carte.getLayer(id)", couche), couche
     assert bureau.page.locator("#choix-metrique option").count() >= 5
 
@@ -288,20 +288,40 @@ def test_le_mode_sections_montre_la_maille_cadastrale_des_la_vue_d_ensemble(bure
     bureau.attendre("(carte) => carte.queryRenderedFeatures({layers: ['zones-sections']}).length == 0")
 
 
-def test_le_clic_ouvre_une_infobulle_sans_cadrer_ni_recalculer(bureau):
+def test_a_la_souris_le_survol_informe_et_le_clic_zoome_sur_la_zone(bureau):
+    """Sur grand ecran, le survol d'une commune donne ses chiffres ; le clic y
+    descend, comme « Aller à » : la commune entiere a l'ecran. Rien n'est
+    recalcule."""
+
     bureau.aller(2.35, 48.86, 10)
-    avant = bureau.carte("(carte) => [carte.getCenter().lng, carte.getCenter().lat, carte.getZoom()]")
     calculs = bureau.suivi()["calculs"]
-
-    bureau.page.mouse.click(*bureau.point_ecran(2.33, 48.87))
-
+    point = bureau.point_ecran(2.296, 48.840)  # au coeur du 15e arrondissement
+    bureau.page.mouse.move(*point)
     infobulle = bureau.page.locator("#infobulle")
     infobulle.wait_for(state="visible")
     assert "Prix médian au m²" in infobulle.inner_text()
-    apres = bureau.carte("(carte) => [carte.getCenter().lng, carte.getCenter().lat, carte.getZoom()]")
-    assert apres == pytest.approx(avant)
+    code = bureau.carte(
+        "(carte, p) => { const b = carte.getContainer().getBoundingClientRect();"
+        " return carte.queryRenderedFeatures([p[0] - b.left, p[1] - b.top],"
+        " {layers: ['zones-communes']})[0].properties.c; }", list(point),
+    )
+
+    bureau.page.mouse.click(*point)
+    bureau.attendre("(carte) => carte.getZoom() > 11 && !carte.isMoving()")
+    # Le clic n'epingle rien : sous le curseur, c'est le survol qui reprend.
+    assert "fixee" not in (infobulle.get_attribute("class") or "")
     assert bureau.suivi()["calculs"] == calculs
-    infobulle.locator(".fermer").click()
+    # Le centre de la vue est dans la commune cliquee, et la commune tient a
+    # l'ecran : ses morceaux ne debordent pas du cadre.
+    tient = bureau.carte(
+        "(carte, code) => { const vue = carte.getBounds(); const c = carte.getCenter();"
+        " const morceaux = carte.querySourceFeatures('communes', {filter: ['==', ['get', 'c'], code]});"
+        " const emprise = new maplibregl.LngLatBounds(); let tout = true;"
+        " morceaux.forEach((m) => { const polys = m.geometry.type === 'Polygon' ? [m.geometry.coordinates] : m.geometry.coordinates;"
+        "  polys.forEach((p) => p[0].forEach((q) => { emprise.extend(q); if (!vue.contains(q)) tout = false; })); });"
+        " return [morceaux.length > 0, emprise.contains(c), tout]; }", code,
+    )
+    assert tient == [True, True, True]
 
 
 def test_l_ouverture_ne_demande_que_les_tuiles_du_fond_par_defaut(bureau, site_construit):
@@ -478,9 +498,14 @@ def test_de_loin_une_gare_lourde_se_designe_et_une_station_de_metro_non(bureau):
         if g[2] == 1 and all((g[0] - l[0]) ** 2 + (g[1] - l[1]) ** 2 > 40 ** 2 for l in lourdes)
     ]
     if isolees:
+        # C'est la zone qui repond : a la souris, le clic y zoome, et aucune
+        # infobulle de gare ne s'epingle.
         x, y, _, _ = isolees[0]
-        # C'est la zone qui repond : son infobulle compte des transactions.
-        assert "Transactions" in infobulle_apres_clic(x, y)
+        bureau.page.mouse.click(boite["x"] + x, boite["y"] + y)
+        bureau.attendre("(carte) => carte.getZoom() > 12.3 && !carte.isMoving()")
+        infobulle = bureau.page.locator("#infobulle")
+        assert "fixee" not in (infobulle.get_attribute("class") or "")
+        assert infobulle.is_hidden() or infobulle.locator(".entete svg.ico").count() == 0
 
 
 def test_un_pole_desservi_annonce_a_part_sa_ligne_a_venir(bureau):
@@ -543,7 +568,7 @@ def test_la_page_tient_dans_sa_politique_de_securite(navigateur, site_construit)
         page.locator("#choix-metrique").select_option("prix_total_median")
         attendre("() => window.siteDvf.metrique === 'prix_total_median' && window.siteDvf.complet")
         page.locator("#legende .titre", has_text="Prix total médian").wait_for(timeout=ATTENTE_MS)
-        page.mouse.click(700, 400)
+        page.mouse.move(700, 400)
         page.locator("#infobulle").wait_for(state="visible")
         session.close()
     assert not violations, violations
@@ -566,6 +591,141 @@ def test_les_ventes_arrivent_en_tuiles_et_se_filtrent_dans_le_navigateur(bureau,
     assert len(tuiles()) == demandees
     annee.click()
     bureau.attendre("(carte, avant) => carte.querySourceFeatures('points').length == avant", avant)
+
+
+# --------------------------------------------------------------------------
+# Distance a pied de la gare
+# --------------------------------------------------------------------------
+
+#: Memes regles que `carte.js` : un degre de latitude, et une minute de marche
+#: a vol d'oiseau (4,8 km/h, detours compris).
+METRES_PAR_DEGRE = 111195
+METRES_PAR_MINUTE = 64
+
+
+def _metres(a, b) -> float:
+    import math
+
+    y = (a[1] - b[1]) * METRES_PAR_DEGRE
+    x = (a[0] - b[0]) * METRES_PAR_DEGRE * math.cos(math.radians((a[1] + b[1]) / 2))
+    return math.hypot(x, y)
+
+
+@pytest.fixture(scope="module")
+def gares_du_site(site_construit):
+    import json
+
+    dossier, manifeste = site_construit
+    return json.loads((dossier / manifeste["fichiers"]["gares"]).read_text(encoding="utf-8"))["features"]
+
+
+def test_l_echelle_reste_metrique(bureau):
+    assert bureau.page.locator(".maplibregl-ctrl-scale").count() == 1
+    bureau.aller(2.35, 48.86, 15)
+    assert re.search(r"\d+\s(m|km)$", bureau.page.locator(".maplibregl-ctrl-scale").inner_text())
+
+
+def test_au_survol_un_trait_mene_a_la_gare_la_plus_proche(bureau, gares_du_site):
+    """Un seul trait, du pointeur (ou de la vente qu'il designe) a la gare en
+    service la plus proche, avec le temps de marche ; l'infobulle le reprend.
+    Rien de loin, rien quand le pointeur quitte la carte."""
+
+    bureau.aller(2.4005, 48.7890, 15.4)  # Vitry-sur-Seine, entre le tram 9 et le RER C
+    bureau.page.mouse.move(*bureau.point_ecran(2.4005, 48.7890))
+    bureau.page.wait_for_function("() => !!window.CarteDvf.trajet()", timeout=ATTENTE_MS)
+    trajet = bureau.page.evaluate("() => window.CarteDvf.trajet()")
+
+    en_service = [g for g in gares_du_site if g["properties"]["statut"] == "service"]
+    proche = min(en_service, key=lambda g: _metres(trajet["origine"], g["geometry"]["coordinates"]))
+    distance = _metres(trajet["origine"], proche["geometry"]["coordinates"])
+    attendu = max(1, -(-int(distance * 1000) // (METRES_PAR_MINUTE * 1000)))
+    premiere = trajet["gares"][0]
+    assert premiere["nom"] == proche["properties"]["nom"] and not premiere["a_venir"]
+    assert premiere["minutes"] == attendu
+
+    bureau.attendre("(carte) => carte.querySourceFeatures('trajet').length > 0")
+    pastille = bureau.page.locator("#trajets .pastille-trajet").first
+    assert pastille.is_visible() and pastille.inner_text() == f"{attendu} min"
+    infobulle = bureau.page.locator("#infobulle .gare-proche")
+    assert f"{premiere['nom']}" in infobulle.inner_text()
+    assert f"≈ {attendu} min à pied" in infobulle.inner_text()
+    # Le plus proche est un tram : la gare RER la plus proche est citee aussi.
+    if proche["properties"]["rang"] != 2:
+        assert any(g["nom"] != premiere["nom"] for g in trajet["gares"][1:])
+
+    # Du pointeur, le trait part du pointeur meme.
+    ecart = bureau.carte(
+        "(carte, t) => { const a = carte.project(t.origine), b = carte.project(t.segments[0][0]);"
+        " return Math.hypot(a.x - b.x, a.y - b.y); }", trajet,
+    )
+    assert trajet["ecarts"] == [0] and ecart < 1
+
+    # Le pointeur quitte la carte : le trait s'efface.
+    bureau.page.mouse.move(100, 400)
+    bureau.page.wait_for_function("() => !window.CarteDvf.trajet()", timeout=ATTENTE_MS)
+    assert not bureau.page.locator("#trajets .pastille-trajet:visible").count()
+
+    # De loin, on compare des communes : pas de trait.
+    bureau.aller(2.4005, 48.7890, 12)
+    bureau.page.mouse.move(*bureau.point_ecran(2.4005, 48.7890))
+    bureau.page.wait_for_timeout(300)
+    assert bureau.page.evaluate("() => window.CarteDvf.trajet()") is None
+    bureau.page.mouse.move(100, 400)
+
+
+def test_au_dela_d_une_demi_heure_de_marche_rien_n_est_trace(bureau, ventes, gares_du_site):
+    """Un logement trop loin de toute gare n'a pas de trait : l'infobulle le dit."""
+
+    import numpy as np
+
+    en_service = np.array([g["geometry"]["coordinates"] for g in gares_du_site
+                           if g["properties"]["statut"] == "service"])
+    positions = ventes[["longitude", "latitude"]].dropna().to_numpy()[::50]
+    positions = positions[(np.abs(positions[:, 1] - 48.8) < 0.4) & (np.abs(positions[:, 0] - 2.35) < 0.6)]
+    ecart_x = (positions[:, None, 0] - en_service[None, :, 0]) * METRES_PAR_DEGRE * np.cos(np.radians(48.8))
+    ecart_y = (positions[:, None, 1] - en_service[None, :, 1]) * METRES_PAR_DEGRE
+    plus_proche = np.hypot(ecart_x, ecart_y).min(axis=1)
+    lon, lat = positions[np.argmax(plus_proche)]
+    assert plus_proche.max() > 30 * METRES_PAR_MINUTE + 300
+
+    bureau.aller(lon, lat, 15)
+    bureau.page.mouse.move(*bureau.point_ecran(lon, lat))
+    infobulle = bureau.page.locator("#infobulle .gare-proche")
+    infobulle.wait_for(state="visible", timeout=ATTENTE_MS)
+    assert "Aucune gare à moins de 30 min à pied" in infobulle.inner_text()
+    assert bureau.page.evaluate("() => window.CarteDvf.trajet()") is None
+    bureau.page.mouse.move(100, 400)
+
+
+def test_le_trait_n_empiete_pas_sur_le_logement_clique(bureau):
+    """Clic sur une vente : le trait part de la vente, mais s'arrete avant son
+    icone, et passe sous les icones des autres ventes."""
+
+    bureau.aller(2.3488, 48.8534, 17)  # Ile de la Cite
+    bureau.attendre("(carte) => carte.queryRenderedFeatures({layers: ['transactions']}).length > 0")
+    vente = bureau.carte(
+        "(carte) => { const c = carte.project(carte.getCenter());"
+        " const v = carte.queryRenderedFeatures({layers: ['transactions']});"
+        " const d = (e) => { const p = carte.project(e.geometry.coordinates); return Math.hypot(p.x - c.x, p.y - c.y); };"
+        " v.sort((a, b) => d(a) - d(b)); return v[0].geometry.coordinates; }"
+    )
+    bureau.page.mouse.click(*bureau.point_ecran(*vente))
+    bureau.page.locator("#infobulle").wait_for(state="visible")
+    trajet = bureau.page.evaluate("() => window.CarteDvf.trajet()")
+    assert trajet["origine"] == pytest.approx(vente, abs=1e-9), "le trait part de la vente"
+    mesures = bureau.carte(
+        "(carte, t) => { const o = carte.project(t.origine);"
+        " const a = carte.project(t.segments[0][0]), b = carte.project(t.segments[0][1]);"
+        " return [Math.hypot(a.x - o.x, a.y - o.y), Math.hypot(b.x - o.x, b.y - o.y)]; }", trajet,
+    )
+    # Le trait commence au bord du dessin, cerne compris : il touche l'icone
+    # sans la couvrir. A ce zoom, l'icone fait une vingtaine de pixels.
+    assert mesures[0] == pytest.approx(trajet["ecarts"][0], abs=0.6)
+    assert 6 < trajet["ecarts"][0] < 14 and mesures[1] > mesures[0]
+    ordre = bureau.carte("(carte) => carte.getStyle().layers.map((c) => c.id)")
+    assert ordre.index("trajet") < ordre.index("transactions") < ordre.index("gares")
+    bureau.page.locator("#infobulle .fermer").click()
+    bureau.page.wait_for_function("() => !window.CarteDvf.trajet()", timeout=ATTENTE_MS)
 
 
 # --------------------------------------------------------------------------
@@ -646,11 +806,11 @@ def test_la_metrique_se_choisit_sur_la_carte_et_recolore_tout(bureau, annees):
     bureau.page.locator("#legende .titre", has_text="Évolution annuelle").wait_for(
         timeout=ATTENTE_MS
     )
-    bureau.page.mouse.click(*bureau.point_ecran(2.33, 48.87))
+    bureau.page.mouse.move(*bureau.point_ecran(2.33, 48.87))
     infobulle = bureau.page.locator("#infobulle")
     infobulle.wait_for(state="visible")
     assert "Régularité (R²)" in infobulle.inner_text()
-    infobulle.locator(".fermer").click()
+    bureau.page.mouse.move(100, 400)
 
     # Deux annees seulement : l'evolution annuelle n'est pas calculable, et le
     # panneau dit quoi faire.
@@ -723,6 +883,68 @@ def test_sur_telephone_l_infobulle_d_une_gare_se_pose_au_dessus_d_elle(telephone
     assert "ancree" in infobulle.get_attribute("class")
     bulle = infobulle.bounding_box()
     assert bulle["y"] + bulle["height"] <= y, "la bulle est au-dessus de la gare"
+
+
+def test_sur_telephone_un_appui_sur_une_zone_ouvre_l_infobulle_sans_zoomer(telephone):
+    """Pas de survol au doigt : l'appui reste le seul moyen de lire une zone."""
+
+    infobulle = telephone.page.locator("#infobulle")
+    if infobulle.is_visible():
+        infobulle.locator(".fermer").click()
+    telephone.aller(2.40, 48.85, 11)
+    avant = telephone.carte("(carte) => carte.getZoom()")
+    telephone.page.touchscreen.tap(*telephone.point_ecran(2.40, 48.85))
+    infobulle = telephone.page.locator("#infobulle")
+    infobulle.wait_for(state="visible")
+    assert "Prix médian au m²" in infobulle.inner_text()
+    telephone.page.wait_for_timeout(600)
+    assert telephone.carte("(carte) => carte.getZoom()") == pytest.approx(avant)
+    infobulle.locator(".fermer").click()
+
+
+def test_sur_telephone_un_appui_montre_le_chemin_de_la_gare(telephone):
+    """Pas de survol au doigt : l'appui trace le trait, et le bandeau de
+    l'infobulle donne la gare et le temps de marche."""
+
+    telephone.aller(2.4005, 48.7890, 15.2)
+    telephone.page.touchscreen.tap(*telephone.point_ecran(2.4005, 48.7890))
+    telephone.page.wait_for_function("() => !!window.CarteDvf.trajet()", timeout=ATTENTE_MS)
+    infobulle = telephone.page.locator("#infobulle")
+    infobulle.wait_for(state="visible")
+    assert "min à pied" in infobulle.locator(".gare-proche").inner_text()
+    assert telephone.page.locator("#trajets .pastille-trajet").first.is_visible()
+    infobulle.locator(".fermer").click()
+    telephone.page.wait_for_function("() => !window.CarteDvf.trajet()", timeout=ATTENTE_MS)
+
+
+def test_sur_telephone_le_bandeau_ne_cache_ni_le_logement_ni_la_gare(telephone):
+    """Un emplacement de 84 ventes, touche en bas de l'ecran : la carte glisse
+    pour le garder au-dessus du bandeau, la gare la plus proche est citee avant
+    la liste des ventes, et la pastille du temps de marche reste en vue."""
+
+    lon, lat = 2.24702, 48.88346  # Puteaux, square Leon-Blum
+    telephone.aller(lon, lat, 16.6)
+    telephone.carte("(carte) => { const h = carte.getCanvas().clientHeight;"
+                    " carte.panBy([0, -0.35 * h], {duration: 0}); }")
+    telephone.attendre("(carte) => !carte.isMoving() && carte.areTilesLoaded()")
+    telephone.page.touchscreen.tap(*telephone.point_ecran(lon, lat))
+    infobulle = telephone.page.locator("#infobulle")
+    infobulle.wait_for(state="visible")
+    telephone.attendre("(carte) => !carte.isMoving()")
+    telephone.page.wait_for_timeout(400)
+
+    bandeau = infobulle.bounding_box()
+    assert bandeau["height"] <= 844 * 0.42
+    _, y = telephone.point_ecran(lon, lat)
+    assert y < bandeau["y"] - 40, "le logement reste visible au-dessus du bandeau"
+    gare = infobulle.locator(".gare-proche")
+    boite = gare.bounding_box()
+    assert boite["y"] + boite["height"] <= bandeau["y"] + bandeau["height"], "la gare est lisible sans defiler"
+    assert gare.bounding_box()["y"] < infobulle.locator(".ventes").bounding_box()["y"]
+    pastille = telephone.page.locator("#trajets .pastille-trajet").first
+    assert pastille.is_visible()
+    assert pastille.bounding_box()["y"] + pastille.bounding_box()["height"] <= bandeau["y"]
+    infobulle.locator(".fermer").click()
 
 
 def test_en_paysage_le_telephone_garde_la_carte_en_grand(navigateur, adresse):

@@ -18,9 +18,13 @@
  *    apparaissent. Filtres et couleurs s'appliquent dans le navigateur : un
  *    changement de filtre ne retelecharge pas une tuile.
  *
- * 3. **Le clic ne deplace pas la carte.** Il ouvre une infobulle, et rien
- *    d'autre. C'est la seule facon de consulter une zone au doigt, ou le
- *    survol n'existe pas.
+ * 3. **Le clic sert a lire, ou a descendre d'un cran.** Sur une vente ou
+ *    une gare, il ouvre une infobulle, et rien d'autre. Sur une zone, il
+ *    depend de l'ecran : a la souris, le survol donne deja les chiffres, et
+ *    le clic zoome sur la zone (`zoomerSurZone`) ; au doigt, ou le survol
+ *    n'existe pas, il ouvre l'infobulle. Sur telephone, quand le bandeau de
+ *    l'infobulle recouvrirait le logement touche, la carte glisse juste assez
+ *    pour le garder en vue (`degagerDuBandeau`).
  */
 (function () {
   "use strict";
@@ -179,6 +183,7 @@
       // tourne un telephone.
       if (!vueTouchee) cadrer(false);
       suivreAncre();
+      suivreTrajet();
     }
     reglerLegende();
   });
@@ -556,6 +561,7 @@
     planifierEtiquettes();
     majMailleLue();
     suivreAncre();
+    suivreTrajet();
   }
 
   /* `setTiles` changerait les tuiles mais garderait l'attribution du fond
@@ -683,6 +689,9 @@
     TYPE_APPARTEMENT, "ico-immeuble",
     "ico-mixte",
   ];
+  //: Taille et cerne des icones de ventes (paliers de zoom).
+  var TAILLE_VENTE = [Z_POINTS_DEBUT, 0.38, Z_POINTS_PLEIN, 0.58, 18, 0.76];
+  var CERNE_VENTE_LARGEUR = [Z_POINTS_DEBUT, 0.6, Z_POINTS_PLEIN, 1.0, 18, 1.3];
 
   //: Couleur d'une zone : elle vit dans l'**etat** de l'entite, pas dans ses
   //: proprietes. Un changement de filtre ne reecrit alors ni geometrie ni
@@ -692,25 +701,42 @@
   //: millisecondes par reglage touche.
   var COULEUR_ZONE = ["to-color", ["feature-state", "couleur"], GRIS];
 
-  //: Taille des icones de gares, du plus loin au plus pres. Les gares lourdes
-  //: se voient de plus loin et plus gros que les stations.
-  function tailleGare() {
-    return [
-      "interpolate", ["linear"], ["zoom"],
-      9.5, parRang(0.13, 0.22),
-      11, parRang(0.19, 0.32),
-      12, parRang(0.25, 0.42),
-      13.5, parRang(0.34, 0.50),
-      16, parRang(0.40, 0.58),
-    ];
-  }
-
+  //: Taille des icones de gares, du plus loin au plus pres (paliers de zoom
+  //: et tailles). Les gares lourdes se voient de plus loin et plus gros que
+  //: les stations ; les gares a venir ont la taille des gares lourdes.
+  var TAILLE_GARE_LEGERE = [9.5, 0.13, 11, 0.19, 12, 0.25, 13.5, 0.34, 16, 0.40];
+  var TAILLE_GARE_LOURDE = [9.5, 0.22, 11, 0.32, 12, 0.42, 13.5, 0.50, 16, 0.58];
   //: Le cerne blanc detache l'icone du fond de carte. Il ne s'epaissit qu'une
   //: fois l'icone assez grande pour le porter : a quatre pixels, un cerne
   //: d'un pixel et demi mange le dessin.
-  function haloGare() {
-    return ["interpolate", ["linear"], ["zoom"], 10.5, 0, 12, 0.9, 14, 1.4];
+  var CERNE_GARE = [10.5, 0, 12, 0.9, 14, 1.4];
+
+  /* `interpolate` sur le zoom, a partir d'une liste de paliers. */
+  function selonZoom(paliers) {
+    return ["interpolate", ["linear"], ["zoom"]].concat(paliers);
   }
+
+  /* La meme interpolation, calculee ici : la taille d'une icone a l'ecran. */
+  function valeurAuZoom(paliers, zoom) {
+    if (zoom <= paliers[0]) return paliers[1];
+    for (var i = 2; i < paliers.length; i += 2) {
+      if (zoom <= paliers[i]) {
+        var part = (zoom - paliers[i - 2]) / (paliers[i] - paliers[i - 2]);
+        return paliers[i - 1] + part * (paliers[i + 1] - paliers[i - 1]);
+      }
+    }
+    return paliers[paliers.length - 1];
+  }
+
+  function tailleGare() {
+    var paliers = ["interpolate", ["linear"], ["zoom"]];
+    for (var i = 0; i < TAILLE_GARE_LEGERE.length; i += 2) {
+      paliers.push(TAILLE_GARE_LEGERE[i], parRang(TAILLE_GARE_LEGERE[i + 1], TAILLE_GARE_LOURDE[i + 1]));
+    }
+    return paliers;
+  }
+
+  function haloGare() { return selonZoom(CERNE_GARE); }
 
   var COUCHE_MAILLE = { "zones-communes": CLE_COMMUNE, "zones-sections": CLE_SECTION };
 
@@ -740,6 +766,7 @@
     carte.addSource("sections", sourceContours());
     carte.addSource("points", { type: "geojson", data: VIDE });
     carte.addSource("gares", { type: "geojson", data: VIDE });
+    carte.addSource("trajet", { type: "geojson", data: VIDE });
 
     // Ordre : communes dessous, sections dessus. Pendant le fondu, c'est la
     // maille vers laquelle on descend qui doit se decouvrir, pas l'inverse.
@@ -771,6 +798,26 @@
         "line-dasharray": [4, 2],
       },
     });
+    // Le trait vers la gare la plus proche (`tracerTrajet`) : sous les ventes
+    // et les gares, qu'il ne couvre jamais, au-dessus des zones. Fin, en
+    // pointille leger : il indique une direction, il ne doit pas se lire
+    // comme un chemin. Un liseré blanc, a peine marque, le detache des aplats
+    // les plus soutenus.
+    carte.addLayer({
+      id: "trajet-lisere", type: "line", source: "trajet",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#ffffff", "line-width": 3.2, "line-opacity": 0.55 },
+    });
+    carte.addLayer({
+      id: "trajet", type: "line", source: "trajet",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": ["case", ["get", "a_venir"], VIOLET_PROJET, BLEU_GARE],
+        "line-width": 1.4,
+        "line-opacity": 0.8,
+        "line-dasharray": [2, 2.5],
+      },
+    });
     // Ventes : une maison se dessine en maison, un appartement en immeuble, et
     // ce qui melange les deux en losange. La forme dit le bien, la couleur dit
     // le prix — sur la meme echelle que les sections, si bien qu'un point plus
@@ -783,10 +830,7 @@
         // Assez grandes : c'est ce qu'on est venu regarder a ce zoom-la, et
         // une icone de douze pixels coloree dans le pale de l'echelle se
         // confondrait avec le batiment sous elle.
-        "icon-size": [
-          "interpolate", ["linear"], ["zoom"],
-          Z_POINTS_DEBUT, 0.38, Z_POINTS_PLEIN, 0.58, 18, 0.76,
-        ],
+        "icon-size": selonZoom(TAILLE_VENTE),
         // Deux ventes voisines sont deux informations, pas un encombrement :
         // rien ne doit etre ecarte. Ces deux options evitent en prime a
         // MapLibre de calculer, image par image, quelles icones se
@@ -804,9 +848,7 @@
         "icon-halo-color": CERNE_VENTE,
         // Etroit, et proportionne a l'icone : un cerne fixe engorgerait les
         // decoupes quand l'icone retrecit.
-        "icon-halo-width": [
-          "interpolate", ["linear"], ["zoom"], Z_POINTS_DEBUT, 0.6, Z_POINTS_PLEIN, 1.0, 18, 1.3,
-        ],
+        "icon-halo-width": selonZoom(CERNE_VENTE_LARGEUR),
         "icon-halo-blur": 0,
         // Pleine opacite une fois arrivee : c'est le contraste qui compte.
         "icon-opacity": [
@@ -829,10 +871,7 @@
         // Les projets ne se disputent pas la place entre eux : ils sont trop
         // peu nombreux pour se masquer, et en cacher un serait le pire des
         // services a rendre a qui lit la carte pour cela.
-        "icon-size": [
-          "interpolate", ["linear"], ["zoom"],
-          9.5, 0.22, 11, 0.32, 12, 0.42, 13.5, 0.50, 16, 0.58,
-        ],
+        "icon-size": selonZoom(TAILLE_GARE_LOURDE),
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
       },
@@ -876,7 +915,10 @@
     // Un double-clic zoome — il ne demande pas les chiffres de ce qu'il
     // survole. MapLibre emet pourtant un `click` avant chaque `dblclick` :
     // sans cela, zoomer ouvrirait une infobulle a chaque cran.
-    carte.on("dblclick", fermerInfobulle);
+    carte.on("dblclick", function () {
+      clearTimeout(minuteurZone);
+      fermerInfobulle();
+    });
   }
 
   /* Couches interrogeables au pointeur, par ordre de priorite : une vente
@@ -958,6 +1000,7 @@
     infobulleCle = null;
     infobulleAncre = null;
     effacerSurvol();
+    effacerTrajet();
   }
 
   function effacerSurvol() {
@@ -989,7 +1032,8 @@
   function placerInfobulle(point, html, fixee, ancre) {
     var boite = document.getElementById("infobulle");
     boite.innerHTML =
-      '<button type="button" class="fermer" aria-label="Fermer">×</button>' + html;
+      '<button type="button" class="fermer" aria-label="Fermer">×</button>' + html
+      + '<div class="gare-proche" hidden></div>';
     boite.hidden = false;
     boite.classList.toggle("fixee", !!fixee);
     infobulleFixee = !!fixee;
@@ -1076,6 +1120,7 @@
     if (infobulleFixee) return;
     var trouvee = premiereEntite(point, MARGE_CLIC_SOURIS, false);
     var boite = document.getElementById("infobulle");
+    var gares = tracerTrajet(origineTrajet(trouvee, point));
     if (!trouvee) {
       boite.hidden = true;
       infobulleCle = null;
@@ -1089,11 +1134,14 @@
     else effacerSurvol();
     var cle = cleEntite(trouvee);
     if (!boite.hidden && cle === infobulleCle) {
+      ecrireGares(gares);
       positionnerInfobulle(point);
       return;
     }
     infobulleCle = cle;
     placerInfobulle(point, contenuEntite(trouvee.couche, trouvee.entite), false);
+    ecrireGares(gares);
+    positionnerInfobulle(point);
   }
 
   function quitterSurvol() {
@@ -1102,6 +1150,7 @@
     infobulleCle = null;
     carte.getCanvas().style.cursor = "";
     effacerSurvol();
+    effacerTrajet();
   }
 
   /* Le clic ne cadre pas, ne selectionne pas, ne recalcule rien : il
@@ -1114,12 +1163,71 @@
     var trouvee = premiereEntite(evenement.point, marge, !SURVOL_POSSIBLE);
     if (!trouvee) { fermerInfobulle(); return; }
     var maille = COUCHE_MAILLE[trouvee.couche];
+    if (maille && !PETIT_ECRAN.matches) {
+      fermerInfobulle();
+      zoomerSurZone(maille, trouvee.entite);
+      return;
+    }
     if (maille) marquerSurvol(maille === CLE_SECTION ? "sections" : "communes", trouvee.entite.properties.c);
     else effacerSurvol();
     infobulleCle = cleEntite(trouvee);
     var gare = trouvee.couche === "gares" || trouvee.couche === "gares-projet";
     var ancre = gare && PETIT_ECRAN.matches ? trouvee.entite.geometry.coordinates.slice() : null;
+    var gares = tracerTrajet(origineTrajet(trouvee, evenement.point));
     placerInfobulle(evenement.point, contenuEntite(trouvee.couche, trouvee.entite), true, ancre);
+    ecrireGares(gares);
+    if (!ancre) positionnerInfobulle(evenement.point);
+    degagerDuBandeau();
+    suivreTrajet();
+  }
+
+  // --------------------------------------------------- Zoom sur une zone
+  //
+  // Sur grand ecran, cliquer une commune ou une section y descend, comme
+  // « Aller à » : la zone entiere a l'ecran, avec une marge. On ne recule
+  // jamais — cliquer une grande zone qu'on regarde deja de pres ne fait que
+  // la centrer —, et on s'arrete au zoom ou chaque vente se lit.
+
+  var ZOOM_MAX_ZONE = 16;
+  var MARGE_ZONE = 48;
+  //: MapLibre emet un `click` avant chaque `dblclick`. Le zoom attend ce
+  //: delai : un double-clic l'annule, et garde son propre zoom d'un cran.
+  var DELAI_DOUBLE_CLIC = 260;
+  var minuteurZone = 0;
+
+  /* Emprise d'une zone : ses morceaux dans les tuiles deja decoupees, et
+   * l'entite touchee. Une zone plus grande que ce qu'on voit n'est connue
+   * que de ses morceaux proches — le zoom la cadre alors par la, sans
+   * reculer. */
+  function bornesZone(nomSource, code, entite) {
+    var bornes = new maplibregl.LngLatBounds();
+    var morceaux = carte.querySourceFeatures(nomSource, { filter: ["==", ["get", "c"], code] });
+    morceaux.concat([entite]).forEach(function (morceau) {
+      var geometrie = morceau.geometry || {};
+      var polygones = geometrie.type === "MultiPolygon" ? geometrie.coordinates
+        : geometrie.type === "Polygon" ? [geometrie.coordinates] : [];
+      polygones.forEach(function (polygone) {
+        (polygone[0] || []).forEach(function (point) { bornes.extend(point); });
+      });
+    });
+    return bornes.isEmpty() ? null : bornes;
+  }
+
+  function zoomerSurZone(maille, entite) {
+    var nomSource = maille === CLE_SECTION ? "sections" : "communes";
+    var code = entite.properties.c;
+    clearTimeout(minuteurZone);
+    minuteurZone = setTimeout(function () {
+      var bornes = bornesZone(nomSource, code, entite);
+      var camera = bornes && carte.cameraForBounds(bornes, { padding: MARGE_ZONE });
+      if (!camera) return;
+      vueTouchee = true;
+      carte.flyTo({
+        center: camera.center,
+        zoom: Math.min(Math.max(camera.zoom, carte.getZoom()), ZOOM_MAX_ZONE),
+        essential: true,
+      });
+    }, DELAI_DOUBLE_CLIC);
   }
 
   function infobulleZone(maille, proprietes) {
@@ -1157,6 +1265,322 @@
       + (desserte ? "<div>" + echapper(desserte) + "</div>" : "")
       + (statut ? '<div class="projet">Gare ' + statut + "</div>" : "")
       + (proprietes.a_venir ? '<div class="projet">À venir : ' + echapper(proprietes.a_venir) + "</div>" : "");
+  }
+
+  // ------------------------------------------------------- Distance a pied
+  //
+  // A quelle distance de la gare ? La carte le dit en minutes, et seulement
+  // la ou l'on regarde : aucun cercle, aucune couche de plus a lire.
+  //
+  // Des qu'on regarde un quartier, le pointeur — ou la vente qu'il designe —
+  // est relie a la gare en service la plus proche, en pointille, avec le
+  // temps de marche. Si une gare a venir est plus proche encore, un second
+  // trait, violet, y mene : c'est elle qui change le quartier. Au doigt, un
+  // appui suffit. Au-dela d'une demi-heure de marche, rien n'est trace.
+  //
+  // Le calcul se fait ici, sur les gares deja chargees : quelques centaines
+  // de distances par image, rien a telecharger.
+
+  //: Une minute de marche, a vol d'oiseau : 4,8 km/h, soit 80 m par minute le
+  //: long des rues, qui font en moyenne 1,25 fois la ligne droite.
+  var METRES_PAR_MINUTE = 64;
+  //: Zoom a partir duquel le trait suit le pointeur : on regarde un quartier,
+  //: plus une agglomeration.
+  var Z_TRAJET = 13;
+  //: En deca, le pointeur est sur la gare : pas de trait.
+  var TRAJET_MIN_METRES = 30;
+  //: Au-dela d'une demi-heure de marche, on ne va plus a la gare a pied : ni
+  //: trait ni temps, et l'infobulle le dit.
+  var MINUTES_MAX = 30;
+  var METRES_PAR_DEGRE = 111195;
+
+  var trajet = null;          // { origine, icone, gares, traits, segments, zoom }
+
+  function metresEntre(a, b) {
+    var y = (a[1] - b[1]) * METRES_PAR_DEGRE;
+    var x = (a[0] - b[0]) * METRES_PAR_DEGRE * Math.cos((a[1] + b[1]) / 360 * Math.PI);
+    return Math.sqrt(x * x + y * y);
+  }
+
+  function minutesAPied(metres) {
+    return Math.max(1, Math.ceil(metres / METRES_PAR_MINUTE));
+  }
+
+  /* La gare la plus proche d'une position, parmi celles que retient `garder`
+   * (ses proprietes, posees par `charge.points_gares`). */
+  function gareLaPlusProche(position, garder, projet) {
+    var entites = (args && args.gares && args.gares.features) || [];
+    var meilleure = null, distance = Infinity;
+    for (var i = 0; i < entites.length; i++) {
+      var p = entites[i].properties || {};
+      if (!garder(p)) continue;
+      var d = metresEntre(position, entites[i].geometry.coordinates);
+      if (d < distance) { distance = d; meilleure = entites[i]; }
+    }
+    if (!meilleure || minutesAPied(distance) > MINUTES_MAX) return null;
+    return { gare: meilleure, metres: distance, minutes: minutesAPied(distance), a_venir: projet };
+  }
+
+  var ICONE_DU_TYPE = {};
+  ICONE_DU_TYPE[TYPE_MAISON] = "maison";
+  ICONE_DU_TYPE[TYPE_APPARTEMENT] = "immeuble";
+  ICONE_DU_TYPE[TYPE_MIXTE] = "mixte";
+
+  /* D'ou part le trait : de la vente designee — et de son icone —, sinon du
+   * pointeur. Une gare designee n'en demande pas. */
+  function origineTrajet(trouvee, point) {
+    if (trouvee && (trouvee.couche === "gares" || trouvee.couche === "gares-projet")) return null;
+    if (trouvee && trouvee.couche === "transactions") {
+      return {
+        position: trouvee.entite.geometry.coordinates.slice(),
+        icone: ICONE_DU_TYPE[trouvee.entite.properties.k] || "mixte",
+      };
+    }
+    var lieu = carte.unproject(point);
+    return { position: [lieu.lng, lieu.lat], icone: null };
+  }
+
+  function enService(p) { return p.statut === "service"; }
+  function trainOuRer(p) { return p.statut === "service" && p.rang === 2; }
+  //: A venir : un chantier, un projet, ou un pole desservi ou une ligne est
+  //: annoncee.
+  function aVenir(p) { return p.statut !== "service" || !!p.a_venir; }
+
+  /* Pose le trait vers la gare la plus proche — et vers la gare a venir si
+   * elle l'est plus encore — et rend les gares a citer dans l'infobulle :
+   * les memes, plus la gare de train ou de RER la plus proche quand la plus
+   * proche n'est qu'un metro ou un tram. Rien en deca du zoom des quartiers
+   * (`null`), et une liste vide quand aucune gare n'est a moins d'une
+   * demi-heure de marche. */
+  function tracerTrajet(depart) {
+    if (!depart || carte.getZoom() < Z_TRAJET) { effacerTrajet(); return null; }
+    var origine = depart.position;
+    var service = gareLaPlusProche(origine, enService, false);
+    var projet = gareLaPlusProche(origine, aVenir, true);
+    var lourde = service && service.gare.properties.rang !== 2
+      ? gareLaPlusProche(origine, trainOuRer, false) : null;
+    var retenues = [];
+    if (service) retenues.push(service);
+    if (projet && (!service || projet.metres < service.metres)) retenues.push(projet);
+    if (!retenues.length) { effacerTrajet(); return []; }
+    var traits = retenues.filter(function (r) { return r.metres >= TRAJET_MIN_METRES; });
+    var citees = retenues.concat(lourde ? [lourde] : []);
+    trajet = {
+      origine: origine, icone: depart.icone, gares: citees, traits: traits, zoom: null, segments: [],
+    };
+    poserTraits();
+    poserPastilles();
+    return citees;
+  }
+
+  /* Silhouettes des icones, dans la boite de 24 x 24 des `TRACES`, pour
+   * savoir ou le trait en touche le bord. Le metro est un disque. */
+  var SILHOUETTES = {
+    maison: [[12, 1.6], [23, 11.2], [19.6, 11.2], [19.6, 22.4], [4.4, 22.4], [4.4, 11.2], [1, 11.2]],
+    immeuble: [[4, 1.8], [20, 1.8], [20, 22.4], [4, 22.4]],
+    mixte: [[12, 1.4], [22.6, 12], [12, 22.6], [1.4, 12]],
+    train: [[3, 2], [21, 2], [21, 18], [22.4, 22.4], [2.2, 22.4], [3, 18]],
+    tram: [[2, 2], [22, 2], [22, 22], [2, 22]],
+    metro: (function () {
+      var cercle = [];
+      for (var i = 0; i < 32; i++) {
+        cercle.push([12 + 10.5 * Math.cos(i * Math.PI / 16), 12 + 10.5 * Math.sin(i * Math.PI / 16)]);
+      }
+      return cercle;
+    })(),
+  };
+
+  /* Distance du centre de l'icone a son bord, dans la direction `(ux, uy)`,
+   * en unites de la boite de 24 : la plus lointaine traversee d'un cote. */
+  function bordSilhouette(nom, ux, uy) {
+    var contour = SILHOUETTES[nom] || SILHOUETTES.mixte;
+    var loin = 0;
+    for (var i = 0; i < contour.length; i++) {
+      var p = contour[i], q = contour[(i + 1) % contour.length];
+      var ex = q[0] - p[0], ey = q[1] - p[1];
+      var d = ux * ey - uy * ex;
+      if (Math.abs(d) < 1e-9) continue;
+      var wx = p[0] - 12, wy = p[1] - 12;
+      var t = (wx * ey - wy * ex) / d;
+      var s = (wx * uy - wy * ux) / d;
+      if (t > 0 && s >= 0 && s <= 1 && t > loin) loin = t;
+    }
+    return loin;
+  }
+
+  //: Une unite de la boite de 24, en pixels, pour une icone de taille 1 : le
+  //: dessin occupe 32 pixels de l'image (`ICONE_DESSIN`).
+  var PIXELS_PAR_UNITE = ICONE_DESSIN / 24;
+
+  /* Ou le trait touche l'icone, en pixels depuis son centre : le bord du
+   * dessin, plus son cerne. Il la touche sans jamais la couvrir. */
+  function ecartIcone(nom, taille, cerne, ux, uy) {
+    return bordSilhouette(nom, ux, uy) * PIXELS_PAR_UNITE * taille + cerne;
+  }
+
+  function ecartGare(gare, zoom, ux, uy) {
+    var p = gare.properties || {};
+    var paliers = p.statut !== "service" || p.rang === 2 ? TAILLE_GARE_LOURDE : TAILLE_GARE_LEGERE;
+    return ecartIcone(TRACES[p.genre] ? p.genre : "train", valeurAuZoom(paliers, zoom),
+      valeurAuZoom(CERNE_GARE, zoom), ux, uy);
+  }
+
+  /* Les traits, du bord de l'icone du logement a celui de la gare. Les
+   * ecarts se comptent en pixels : ils sont recalcules quand le zoom change,
+   * pas quand la carte glisse. */
+  function poserTraits() {
+    var zoom = carte.getZoom();
+    trajet.zoom = zoom;
+    trajet.ecarts = [];
+    trajet.segments = trajet.traits.map(function (trait) {
+      var a = carte.project(trajet.origine), b = carte.project(trait.gare.geometry.coordinates);
+      var dx = b.x - a.x, dy = b.y - a.y, longueur = Math.sqrt(dx * dx + dy * dy);
+      if (!longueur) return null;
+      var ux = dx / longueur, uy = dy / longueur;
+      var depart = trajet.icone ? ecartIcone(trajet.icone, valeurAuZoom(TAILLE_VENTE, zoom),
+        valeurAuZoom(CERNE_VENTE_LARGEUR, zoom), ux, uy) : 0;
+      var arrivee = ecartGare(trait.gare, zoom, -ux, -uy);
+      trajet.ecarts.push(depart);
+      if (longueur <= depart + arrivee + 4) return null;
+      var debut = carte.unproject([a.x + ux * depart, a.y + uy * depart]);
+      var fin = carte.unproject([b.x - ux * arrivee, b.y - uy * arrivee]);
+      return [[debut.lng, debut.lat], [fin.lng, fin.lat]];
+    });
+    carte.getSource("trajet").setData({
+      type: "FeatureCollection",
+      features: trajet.traits.map(function (trait, i) {
+        return trajet.segments[i] && {
+          type: "Feature", properties: { a_venir: trait.a_venir },
+          geometry: { type: "LineString", coordinates: trajet.segments[i] },
+        };
+      }).filter(Boolean),
+    });
+  }
+
+  function effacerTrajet() {
+    if (!trajet) return;
+    trajet = null;
+    var source = carte && carte.getSource("trajet");
+    if (source) source.setData(VIDE);
+    poserPastilles();
+  }
+
+  /* Le temps de marche, au milieu de chaque trait. Des `div`, comme les noms
+   * de communes : MapLibre n'ecrit pas de texte sans serveur de polices. */
+  function poserPastilles() {
+    var conteneur = document.getElementById("trajets");
+    var traits = trajet ? trajet.traits : [];
+    while (conteneur.children.length < traits.length) {
+      var pastille = document.createElement("div");
+      pastille.className = "pastille-trajet";
+      conteneur.appendChild(pastille);
+    }
+    for (var i = 0; i < conteneur.children.length; i++) {
+      var boite = conteneur.children[i];
+      boite.hidden = i >= traits.length;
+      if (boite.hidden) continue;
+      boite.textContent = traits[i].minutes + " min";
+      boite.classList.toggle("a-venir", traits[i].a_venir);
+    }
+    suivreTrajet();
+  }
+
+  //: Marge, en pixels, entre une pastille et le bord de la carte.
+  var MARGE_PASTILLE = 24;
+  //: Distance maximale, en pixels, entre la pastille et le depart du trait.
+  var PASTILLE_MAX_PX = 90;
+
+  /* Sur telephone, l'infobulle d'une vente est un bandeau au bas de l'ecran :
+   * la carte visible s'arrete a son bord superieur. */
+  function bandeauOuvert() {
+    var boite = document.getElementById("infobulle");
+    return PETIT_ECRAN.matches && !boite.hidden && !boite.classList.contains("ancree");
+  }
+
+  function hautVisible() {
+    var hauteur = carte.getCanvas().clientHeight;
+    if (!bandeauOuvert()) return hauteur;
+    var haut = document.getElementById("infobulle").getBoundingClientRect().top
+      - carte.getContainer().getBoundingClientRect().top;
+    return Math.max(0, Math.min(hauteur, haut));
+  }
+
+  //: Marge minimale entre le logement touche et le bandeau, en pixels.
+  var MARGE_BANDEAU = 56;
+
+  /* Le logement touche ne doit pas disparaitre sous le bandeau qu'il ouvre :
+   * s'il y tomberait, la carte glisse juste assez pour le garder au-dessus —
+   * sans changer de zoom —, et le trait vers la gare avec lui. */
+  function degagerDuBandeau() {
+    if (!trajet || !bandeauOuvert()) return;
+    var visible = hautVisible();
+    var y = carte.project(trajet.origine).y;
+    if (y <= visible - MARGE_BANDEAU) return;
+    carte.panBy([0, y - visible * 0.55], { duration: 300 });
+  }
+
+  /* La pastille se pose sur la partie **visible** du trait, pres du
+   * logement : quand la gare est hors de l'ecran, elle reste lisible, et le
+   * trait dit dans quelle direction marcher. */
+  function suivreTrajet() {
+    if (!trajet) return;
+    if (carte.getZoom() < Z_TRAJET) { effacerTrajet(); return; }
+    if (carte.getZoom() !== trajet.zoom) poserTraits();
+    var conteneur = document.getElementById("trajets");
+    var canevas = carte.getCanvas();
+    var cadre = [MARGE_PASTILLE, MARGE_PASTILLE,
+      canevas.clientWidth - MARGE_PASTILLE, hautVisible() - MARGE_PASTILLE];
+    for (var i = 0; i < trajet.traits.length; i++) {
+      var segment = trajet.segments[i];
+      var visible = segment && decouper(carte.project(segment[0]), carte.project(segment[1]), cadre);
+      var boite = conteneur.children[i];
+      boite.hidden = !visible;
+      if (!visible) continue;
+      // Au milieu de la partie visible, sans s'eloigner du logement : c'est
+      // pres de lui qu'on regarde, loin des reglages poses en haut de l'ecran.
+      var vx = visible[2] - visible[0], vy = visible[3] - visible[1];
+      var longueur = Math.sqrt(vx * vx + vy * vy);
+      var t = longueur ? Math.min(longueur / 2, PASTILLE_MAX_PX) / longueur : 0;
+      boite.style.transform = "translate(" + Math.round(visible[0] + vx * t) + "px,"
+        + Math.round(visible[1] + vy * t) + "px) translate(-50%, -50%)";
+    }
+  }
+
+  /* Le segment `a`-`b` coupe au rectangle `[x0, y0, x1, y1]` (Liang-Barsky) :
+   * `[xa, ya, xb, yb]`, ou `null` s'il est tout entier dehors. */
+  function decouper(a, b, cadre) {
+    var dx = b.x - a.x, dy = b.y - a.y, t0 = 0, t1 = 1;
+    var bords = [[-dx, a.x - cadre[0]], [dx, cadre[2] - a.x], [-dy, a.y - cadre[1]], [dy, cadre[3] - a.y]];
+    for (var i = 0; i < 4; i++) {
+      var p = bords[i][0], q = bords[i][1];
+      if (p === 0) { if (q < 0) return null; continue; }
+      var t = q / p;
+      if (p < 0) { if (t > t1) return null; if (t > t0) t0 = t; }
+      else { if (t < t0) return null; if (t < t1) t1 = t; }
+    }
+    return [a.x + t0 * dx, a.y + t0 * dy, a.x + t1 * dx, a.y + t1 * dy];
+  }
+
+  /* Dans l'infobulle : la gare, ses lignes et le temps de marche. */
+  function ecrireGares(gares) {
+    var zone = document.querySelector("#infobulle .gare-proche");
+    if (!zone) return;
+    zone.hidden = !gares;
+    if (!gares) { zone.innerHTML = ""; return; }
+    if (!gares.length) {
+      zone.innerHTML = '<div class="loin">Aucune gare à moins de ' + MINUTES_MAX + " min à pied</div>";
+      return;
+    }
+    zone.innerHTML = gares.map(function (r) {
+      var p = r.gare.properties || {};
+      var genre = TRACES[p.genre] ? p.genre : "train";
+      var lignes = r.a_venir ? (p.statut === "service" ? p.a_venir : p.lignes) : p.lignes;
+      return '<div class="' + (r.a_venir ? "projet" : "") + '">'
+        + symboleLegende(genre, r.a_venir ? VIOLET_PROJET : BLEU_GARE)
+        + '<span class="nom">' + echapper(p.nom || "Gare") + "</span>"
+        + (lignes ? " (" + echapper(lignes) + ")" : "")
+        + " · ≈ " + r.minutes + " min à pied" + (r.a_venir ? ", à venir" : "") + "</div>";
+    }).join("");
   }
 
   // ------------------------------------------------------- Noms de communes
@@ -2070,5 +2494,17 @@
       appliquer(recus);
     },
     panne: function (message) { signalerPanne(message); },
+    //: Pour les tests : le trait pose, et les gares qu'il relie.
+    trajet: function () {
+      return trajet ? {
+        origine: trajet.origine,
+        segments: trajet.segments.slice(),
+        ecarts: (trajet.ecarts || []).slice(),
+        gares: trajet.gares.map(function (r) {
+          return { nom: r.gare.properties.nom, minutes: r.minutes, a_venir: r.a_venir,
+                   position: r.gare.geometry.coordinates.slice() };
+        }),
+      } : null;
+    },
   };
 })();

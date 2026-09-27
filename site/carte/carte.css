@@ -118,6 +118,28 @@ html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
   font-size: 11px; font-weight: 600; color: #1f1f1f; letter-spacing: .1px;
   text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 4px #fff, 0 0 6px #fff; }
 
+/* Distance a pied. Le temps de marche se pose au milieu du trait qui mene a
+   la gare la plus proche, dans la couleur de la gare ; l'infobulle le
+   reprend avec le nom de la gare et ses lignes. */
+#trajets { position: absolute; inset: 0; z-index: 4; pointer-events: none; overflow: hidden; }
+#trajets .pastille-trajet { position: absolute; top: 0; left: 0; white-space: nowrap;
+  background: rgba(255,255,255,.92); color: #1b6ca8; font-size: 10px; font-weight: 600;
+  line-height: 1; padding: 2px 5px; border: 1px solid rgba(27,108,168,.45);
+  border-radius: 999px; box-shadow: 0 1px 2px rgba(0,0,0,.15);
+  font-variant-numeric: tabular-nums; }
+#trajets .pastille-trajet.a-venir { color: #7b4fa8; border-color: rgba(123,79,168,.45); }
+/* La gare vient juste sous le titre de l'infobulle, avant la liste des
+   ventes : un immeuble aux dizaines de mutations ne la repousse pas hors de
+   vue. L'ordre se regle ici, le contenu reste ecrit dans l'ordre du texte. */
+#infobulle { display: flex; flex-direction: column; }
+#infobulle[hidden] { display: none; }
+#infobulle > .entete { order: -3; }
+#infobulle > .repere { order: -2; }
+#infobulle > .gare-proche { order: -1; margin: 1px 0 5px; padding-bottom: 4px;
+  border-bottom: 1px solid #e3e3e3; }
+#infobulle .gare-proche .nom { font-weight: 600; }
+#infobulle .gare-proche .loin { color: #666; font-style: italic; }
+
 /* ------------------------------------------------------------------ Mobile
    Un telephone n'a ni survol ni place perdue : les cibles grossissent, la
    legende se replie, et l'infobulle d'une zone ou d'une vente devient un
@@ -151,9 +173,11 @@ html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
     box-shadow: 0 -2px 14px rgba(0,0,0,.25); }
   #infobulle { font-size: 13px; }
   #infobulle.ancree { padding: 9px 12px; box-shadow: 0 2px 12px rgba(0,0,0,.28); }
-  /* Au doigt, la liste des ventes d'un immeuble se fait longue : on lui donne
-     un peu plus de la moitie de l'ecran, et elle defile pour le reste. */
-  #infobulle:not(.ancree), #infobulle.fixee:not(.ancree) { max-height: 55vh; }
+  /* Au doigt, la liste des ventes d'un immeuble se fait longue : elle defile
+     dans un bandeau borne a un peu plus du tiers de l'ecran, pour que la
+     carte — le logement touche et le chemin de sa gare — reste visible
+     au-dessus. */
+  #infobulle:not(.ancree), #infobulle.fixee:not(.ancree) { max-height: 40vh; box-sizing: border-box; }
   #infobulle b { min-width: 112px; }
   #infobulle .entete { padding-right: 34px; }
   #infobulle .fermer { font-size: 22px; padding: 6px 10px; top: 4px; right: 6px; }

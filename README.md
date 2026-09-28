@@ -62,6 +62,40 @@ La CI publie le site sur Cloudflare Pages après les tests. Elle attend, dans
 - secrets `CLOUDFLARE_API_TOKEN` (droit *Cloudflare Pages · Edit*) et
   `CLOUDFLARE_ACCOUNT_ID` ;
 - variable `CLOUDFLARE_PROJECT_NAME` (nom du projet Pages) ;
-- secret `JETON_MISE_A_JOUR` : jeton GitHub à droits fins sur le dépôt (*Contents* et
-  *Pull requests* en écriture), pour les pull requests des mises à jour automatiques ;
+- secret `JETON_MISE_A_JOUR` : jeton GitHub à droits fins sur le seul dépôt
+  (*Contents*, *Pull requests* et *Workflows* en écriture), avec la plus longue durée
+  proposée. Il pousse les branches des mises à jour automatiques, fait tourner leur CI,
+  et fusionne celles qui touchent aux workflows. La veille prévient un mois avant son
+  expiration ;
 - variable facultative `ADRESSE_SITE`, pour une autre adresse que celle du site.
+
+## Maintenance automatique
+
+Le site se tient à jour seul ; il ne demande une intervention qu'en cas d'imprévu, et
+le dit alors par une issue (donc un courriel au propriétaire du dépôt).
+
+| Quand | Quoi | Workflow |
+|---|---|---|
+| le 3 du mois | nouvelles DVF d'Etalab ? fenêtre glissée, site reconstruit, tests, pull request | `donnees.yml` |
+| le 10 du mois | gares ouvertes ou annoncées ? même chemin | `reseau.yml` |
+| chaque mois | nouvelles versions des actions et des dépendances Python | Dependabot |
+| après chaque CI, et chaque jour | fusion des pull requests automatiques vertes, une à la fois | `fusion-auto.yml` |
+| chaque lundi | veille : site en ligne, fraîcheur des données, fonds de carte, jeton, pull requests en attente, CI de `main`, workflows réactivés, fin de vie de Python | `veille.yml` |
+
+Garde-fous :
+
+- une pull request n'est fusionnée que si **tous les tests** passent, et seulement si
+  la CI de `main` est verte ; le site n'est déployé que depuis un `main` vert. Au pire,
+  le site en ligne reste sur sa dernière bonne version ;
+- une mise à jour des données qui s'écarte de l'ordinaire (ventes en chute, prix révisés
+  à années égales, communes disparues, contours manquants) n'est pas fusionnée :
+  étiquette `a-verifier`, et une issue ;
+- une CI rouge est relancée une fois ; si elle reste rouge, la pull request attend, et
+  la veille la signale au bout de trois semaines ;
+- les pull requests faites à la main ne sont jamais fusionnées d'office.
+
+Ce qui reste hors de portée de l'automatisation, et que la veille signale : le
+renouvellement du nom de domaine (à confier au renouvellement automatique du
+registraire), le jeton GitHub à recréer à son expiration, un changement d'adresse ou de
+format des sources (Etalab, IDFM, fonds de carte), ou la fin d'un service gratuit
+(Cloudflare Pages, GitHub Actions).

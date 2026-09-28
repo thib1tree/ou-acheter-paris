@@ -10,8 +10,8 @@
 #
 # - rien n'a changé : il s'arrête là ;
 # - du neuf : il reconstruit le site, lance tous les tests et ouvre une pull
-#   request qui liste les lignes ouvertes et annoncées. Il ne reste qu'à
-#   vérifier la prévisualisation et fusionner ;
+#   request qui liste les lignes ouvertes et annoncées. La fusion automatique
+#   (fusion-auto.yml) la fusionne si la CI est verte ;
 # - un échec : il ouvre une issue (étiquette mise-a-jour-donnees).
 #
 # Même jeton que la mise à jour des données (JETON_MISE_A_JOUR, voir le
@@ -46,13 +46,13 @@ jobs:
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
           cache: pip
           cache-dependency-path: requirements*.txt
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "22"
+          node-version: "lts/*"
 
       - name: Dépendances
         run: pip install -r requirements-dev.txt
@@ -127,12 +127,4 @@ jobs:
             tail -n 150 "$RUNNER_TEMP/journal.txt" 2>/dev/null || echo "(journal vide)"
             echo '```'
           } > "$RUNNER_TEMP/issue.md"
-          gh label create mise-a-jour-donnees --color B60205 \
-            --description "Échec de la mise à jour automatique des données" 2>/dev/null || true
-          existante=$(gh issue list --label mise-a-jour-donnees --state open --json number --jq '.[0].number')
-          if [ -n "$existante" ]; then
-            gh issue comment "$existante" --body-file "$RUNNER_TEMP/issue.md"
-          else
-            gh issue create --title "Actualisation des gares en échec" --label mise-a-jour-donnees \
-              --body-file "$RUNNER_TEMP/issue.md"
-          fi
+          scripts/signaler.sh mise-a-jour-donnees "Actualisation des gares en échec" "$RUNNER_TEMP/issue.md"

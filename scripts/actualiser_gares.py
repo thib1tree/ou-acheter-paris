@@ -56,7 +56,8 @@ def resume(rapport: geo.ActualisationGares) -> str:
     lignes += _liste("Gares en service apparues", rapport.apparues)
     lignes += _liste("Gares en service disparues ou renommées", rapport.disparues)
     lignes += ["**Journal**", ""] + [f"- {m}" for m in rapport.messages] + [""]
-    lignes.append("La CI de cette pull request publie une prévisualisation : vérifier la carte, puis fusionner.")
+    lignes.append("La CI de cette pull request publie une prévisualisation ; la pull request est "
+                  "fusionnée automatiquement si elle est verte.")
     return "\n".join(lignes) + "\n"
 
 

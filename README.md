@@ -82,17 +82,33 @@ le dit alors par une issue (donc un courriel au propriétaire du dépôt).
 | après chaque CI, et chaque jour | fusion des pull requests automatiques vertes, une à la fois | `fusion-auto.yml` |
 | chaque lundi | veille : site en ligne, fraîcheur des données, fonds de carte, jeton, pull requests en attente, CI de `main`, workflows réactivés, fin de vie de Python | `veille.yml` |
 
-Garde-fous :
+Garde-fous, du premier au dernier rempart :
 
-- une pull request n'est fusionnée que si **tous les tests** passent, et seulement si
-  la CI de `main` est verte ; le site n'est déployé que depuis un `main` vert. Au pire,
-  le site en ligne reste sur sa dernière bonne version ;
-- une mise à jour des données qui s'écarte de l'ordinaire (ventes en chute, prix révisés
-  à années égales, communes disparues, contours manquants) n'est pas fusionnée :
-  étiquette `a-verifier`, et une issue ;
-- une CI rouge est relancée une fois ; si elle reste rouge, la pull request attend, et
-  la veille la signale au bout de trois semaines ;
-- les pull requests faites à la main ne sont jamais fusionnées d'office.
+1. **Qui** : seules les pull requests nées d'une automatisation (Dependabot, données,
+   gares, version de Python) sont fusionnées d'office ; jamais une pull request faite à
+   la main.
+2. **Quoi** : chacune reste dans son périmètre. Les données ne touchent qu'à `data/`,
+   les gares qu'à `data/geo/gares.json`, Dependabot qu'à des lignes de version (une
+   action épinglée par empreinte, une borne de dépendance). Une ligne de plus — une
+   étape de CI, un test, une option de pip — et la fusion attend un humain.
+3. **Quand** : une mise à jour de Dependabot attend sept jours, le temps qu'une version
+   piégée soit repérée et retirée avant de s'exécuter avec les secrets du dépôt.
+4. **Données** : une mise à jour qui s'écarte de l'ordinaire (ventes en chute, prix
+   révisés à années égales, communes disparues, contours manquants) porte l'étiquette
+   `a-verifier` et n'est pas fusionnée ; une issue prévient.
+5. **Tests** : tous les tests (Python, navigateur, cohérence Python / JavaScript) doivent
+   passer sur la pull request, puis de nouveau sur `main` après la fusion ; une fusion à
+   la fois, et seulement si `main` est vert.
+6. **Contrôle avant production** : sur `main`, le site est d'abord publié à une adresse
+   de contrôle et vérifié tel que Cloudflare le sert (fichiers, en-têtes, et parcours
+   dans un vrai navigateur : carte colorée, filtre recalculé, ventes au zoom). Un échec
+   arrête tout : la production reste sur la version précédente.
+7. **Retour arrière** : si la production échoue malgré tout à la même vérification, le
+   dernier déploiement sain est rétabli.
+
+Au pire, donc, le site en ligne reste sur sa dernière bonne version, et une issue le
+dit (la veille signale un `main` rouge et les pull requests qui attendent depuis plus de
+trois semaines).
 
 Ce qui reste hors de portée de l'automatisation, et que la veille signale : le
 renouvellement du nom de domaine (à confier au renouvellement automatique du

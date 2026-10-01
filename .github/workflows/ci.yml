@@ -6,6 +6,13 @@
 # ensuite déployé sur Cloudflare Pages : en production pour `main`, en
 # prévisualisation pour une pull request. Un `main` rouge n'est jamais déployé.
 #
+# Pour `main`, la production n'est touchée qu'après un contrôle : le même site
+# est d'abord publié à une adresse de contrôle, puis vérifié tel que Cloudflare
+# le sert, fichiers et en-têtes (verifier_deploiement.py) et parcours dans un
+# vrai navigateur (verifier_carte.py). Un échec arrête tout : la production
+# reste sur la version précédente. Si la production échoue malgré tout à la
+# même vérification, le déploiement précédent est rétabli.
+#
 # Le déploiement attend trois réglages du dépôt (voir le README) : les secrets
 # CLOUDFLARE_API_TOKEN et CLOUDFLARE_ACCOUNT_ID, et la variable
 # CLOUDFLARE_PROJECT_NAME. Tant qu'ils manquent, il est sauté, sans échec.
@@ -87,7 +94,7 @@ jobs:
       github.event_name == 'push' ||
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
       deployments: write
@@ -126,6 +133,19 @@ jobs:
           name: site
           path: dist
 
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        if: steps.reglages.outputs.pret == 'oui'
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Navigateur de vérification
+        if: steps.reglages.outputs.pret == 'oui'
+        run: |
+          pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+
       # Le projet est créé au premier déploiement, avec `main` pour branche de
       # production ; ensuite, cette étape échoue sans conséquence (il existe).
       - name: Projet Cloudflare Pages
@@ -136,6 +156,29 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages project create ${{ steps.reglages.outputs.projet }} --production-branch=main
+
+      # Contrôle avant la production : le même site, à une adresse de
+      # prévisualisation (branche `controle`), vérifié comme le visiteur le
+      # verra. Rien ne va en production s'il échoue.
+      - name: Déploiement de contrôle
+        id: controle
+        if: steps.reglages.outputs.pret == 'oui' && steps.reglages.outputs.branche == 'main'
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy dist --project-name=${{ steps.reglages.outputs.projet }}
+            --branch=controle --commit-hash=${{ github.sha }} --commit-dirty=true
+
+      - name: Vérification de contrôle
+        if: steps.reglages.outputs.pret == 'oui' && steps.reglages.outputs.branche == 'main'
+        env:
+          ADRESSE: ${{ steps.controle.outputs.deployment-url }}
+        run: |
+          set -o pipefail
+          python scripts/verifier_deploiement.py "$ADRESSE" | tee -a "$GITHUB_STEP_SUMMARY"
+          python scripts/verifier_carte.py "$ADRESSE" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Déploiement
         id: deploiement
@@ -153,11 +196,27 @@ jobs:
       # Le site répond-il, et Cloudflare le sert-il comme prévu (compression,
       # cache des données) ? Le résultat va dans le résumé du job.
       - name: Vérification du site déployé
+        id: verification
         if: steps.reglages.outputs.pret == 'oui'
         env:
           ADRESSE: ${{ steps.deploiement.outputs.deployment-url }}
         run: |
-          python3 scripts/verifier_deploiement.py "$ADRESSE" >> "$GITHUB_STEP_SUMMARY"
+          set -o pipefail
+          python scripts/verifier_deploiement.py "$ADRESSE" | tee -a "$GITHUB_STEP_SUMMARY"
+          python scripts/verifier_carte.py "$ADRESSE" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Le cas rare : contrôle réussi, production ratée. Retour à la version
+      # précédente ; la CI reste rouge, et la veille le signale.
+      - name: Retour à la version précédente
+        if: >-
+          failure() && steps.verification.outcome == 'failure'
+          && steps.reglages.outputs.branche == 'main'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJET: ${{ steps.reglages.outputs.projet }}
+          ADRESSE: ${{ steps.deploiement.outputs.deployment-url }}
+        run: python scripts/retablir_production.py "$PROJET" "$ADRESSE" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Adresse de prévisualisation dans la pull request
         if: steps.reglages.outputs.pret == 'oui' && github.event_name == 'pull_request'

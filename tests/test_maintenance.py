@@ -64,13 +64,35 @@ def _run(conclusion="success", statut="completed", tentative=1, evenement="pull_
             "event": evenement, "created_at": "2026-09-02T00:00:00Z", "html_url": "https://ci"}
 
 
-def _api(prs, ci_par_sha, ci_main=(_run(evenement="push"),), refus=None):
+#: Ce que chaque famille de pull requests touche d'ordinaire.
+FICHIERS_TYPES = {
+    "dependabot/github_actions/": [{"filename": ".github/workflows/ci.yml", "patch": (
+        "@@ -1,3 +1,3 @@\n-      - uses: actions/checkout@" + "a" * 40 + " # v4.4.0\n"
+        "+      - uses: actions/checkout@" + "b" * 40 + " # v7.0.1\n")}],
+    "dependabot/pip/": [{"filename": "requirements.txt", "patch": (
+        "@@ -9,1 +9,1 @@\n-pandas>=2.1,<3\n+pandas>=2.1,<4           # dataframes\n")}],
+    "donnees/": [{"filename": "data/territoires/grand-paris/mutations.parquet"},
+                 {"filename": "data/geo/75/75101.json"}],
+    "reseau/": [{"filename": "data/geo/gares.json"}],
+    "maintenance/python-": [{"filename": ".python-version", "patch": "-3.12\n+3.14"}],
+}
+
+
+def _fichiers(branche):
+    return next((f for prefixe, f in FICHIERS_TYPES.items() if branche.startswith(prefixe)),
+                [{"filename": "site/app.js"}])
+
+
+def _api(prs, ci_par_sha, ci_main=(_run(evenement="push"),), refus=None, fichiers=None):
     reponses = {
         f"/repos/{DEPOT}/pulls": prs,
         f"/repos/{DEPOT}/actions/workflows/ci.yml/runs?per_page=10&branch=main": {"workflow_runs": list(ci_main)},
     }
     for sha, runs in ci_par_sha.items():
         reponses[f"/repos/{DEPOT}/actions/workflows/ci.yml/runs?per_page=20&head_sha={sha}"] = {"workflow_runs": runs}
+    for pr in prs:
+        reponses[f"/repos/{DEPOT}/pulls/{pr['number']}/files"] = (fichiers or {}).get(
+            pr["number"], _fichiers(pr["head"]["ref"]))
     reponses[f"/repos/{DEPOT}"] = {"default_branch": "main"}
     # Le plus long prefixe d'abord : `/repos/moi/site` ne doit pas tout avaler.
     return ApiFactice(dict(sorted(reponses.items(), key=lambda kv: -len(kv[0]))), refus)
@@ -79,6 +101,57 @@ def _api(prs, ci_par_sha, ci_main=(_run(evenement="push"),), refus=None):
 # --------------------------------------------------------------------------
 # Quelles pull requests sont fusionnees d'office
 # --------------------------------------------------------------------------
+
+
+def test_chaque_automatisation_reste_dans_son_perimetre():
+    for prefixe, fichiers in FICHIERS_TYPES.items():
+        assert fusion_auto.hors_perimetre(prefixe + "x", fichiers) is None, prefixe
+
+    # Des donnees qui toucheraient au site, aux tests ou a la CI attendent un humain.
+    assert fusion_auto.hors_perimetre("donnees/x", [{"filename": "tests/test_pipeline.py"}]) == \
+        "touche à tests/test_pipeline.py"
+    assert fusion_auto.hors_perimetre("reseau/x", [{"filename": "data/geo/75/75101.json"}])
+    assert fusion_auto.hors_perimetre("maintenance/python-3.14", [{"filename": ".github/workflows/ci.yml"}])
+    assert fusion_auto.hors_perimetre("donnees/x", []) == "aucun fichier modifié"
+
+
+def test_dependabot_ne_change_que_des_lignes_de_version():
+    workflow = ".github/workflows/ci.yml"
+    # Une etape ajoutee, une action non epinglee, une commande : refuse.
+    for ligne in ("      - run: curl https://exemple.org/x.sh | sh",
+                  "      - uses: actions/checkout@v7",
+                  "          GH_TOKEN: ${{ secrets.JETON_MISE_A_JOUR }}"):
+        motif = fusion_auto.hors_perimetre("dependabot/github_actions/a", [
+            {"filename": workflow, "patch": "@@ -1 +1,2 @@\n+" + ligne}])
+        assert motif and motif.startswith("ligne inattendue"), ligne
+    # Une option de pip (un autre index de paquets) : refuse.
+    for ligne in ("--index-url https://exemple.org/simple", "-r autre.txt", "pandas @ https://exemple.org/p.whl"):
+        assert fusion_auto.hors_perimetre("dependabot/pip/a", [
+            {"filename": "requirements.txt", "patch": "+" + ligne}]), ligne
+    # Dependabot hors de ses fichiers, ou sans diff lisible : refuse.
+    assert fusion_auto.hors_perimetre("dependabot/pip/a", [{"filename": "src/stats.py", "patch": "+x"}])
+    assert fusion_auto.hors_perimetre("dependabot/pip/a", [{"filename": "requirements.txt"}])
+
+
+def test_une_pull_request_hors_perimetre_n_est_pas_fusionnee():
+    api = _api([_pr(2, "donnees/x")], {"sha2": [_run()]},
+               fichiers={2: [{"filename": "data/geo/gares.json"}, {"filename": ".github/workflows/ci.yml"}]})
+    journal = []
+    assert fusion_auto.balayer(api, api, journal=journal.append) is None
+    assert api.ecritures == [] and "touche à .github/workflows/ci.yml" in " ".join(journal)
+
+
+def test_dependabot_attend_sept_jours_de_quarantaine():
+    pr = dict(_pr(2, "dependabot/pip/a", "dependabot[bot]"), created_at="2026-09-28T00:00:00Z")
+    api = _api([pr], {"sha2": [_run()]})
+    maintenant = dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc)
+    assert fusion_auto.balayer(api, api, journal=lambda _: None, maintenant=maintenant) is None
+    assert api.ecritures == []
+    plus_tard = dt.datetime(2026, 10, 5, tzinfo=dt.timezone.utc)
+    assert fusion_auto.balayer(api, api, journal=lambda _: None, maintenant=plus_tard) == 2
+    # Les mises a jour du depot lui-meme (donnees, gares) n'attendent pas.
+    api = _api([dict(_pr(3, "donnees/x"), created_at="2026-09-30T23:00:00Z")], {"sha3": [_run()]})
+    assert fusion_auto.balayer(api, api, journal=lambda _: None, maintenant=maintenant) == 3
 
 
 def test_seules_les_pull_requests_automatiques_sont_fusionnees_d_office():
@@ -161,7 +234,7 @@ def test_une_relance_refusee_n_arrete_pas_le_passage():
 
 def test_une_fusion_refusee_passe_a_la_suivante():
     refus = {f"/repos/{DEPOT}/pulls/2/merge": ErreurApi(405, "conflit")}
-    api = _api([_pr(2, "dependabot/a", "dependabot[bot]"), _pr(3, "dependabot/b", "dependabot[bot]")],
+    api = _api([_pr(2, "dependabot/pip/a", "dependabot[bot]"), _pr(3, "dependabot/pip/b", "dependabot[bot]")],
                {"sha2": [_run()], "sha3": [_run()]}, refus=refus)
     assert fusion_auto.balayer(api, api, journal=lambda _: None) == 3
 
@@ -170,6 +243,30 @@ def test_la_simulation_n_ecrit_rien():
     api = _api([_pr(2, "donnees/x")], {"sha2": [_run()]})
     assert fusion_auto.balayer(api, simulation=True, journal=lambda _: None) is None
     assert api.ecritures == []
+
+
+# --------------------------------------------------------------------------
+# Retour a la version precedente
+# --------------------------------------------------------------------------
+
+
+def test_le_retour_vise_le_dernier_deploiement_de_production_sain():
+    import retablir_production
+
+    def deploiement(ident, quand, statut="success", environnement="production"):
+        return {"id": ident, "created_on": quand, "environment": environnement,
+                "latest_stage": {"status": statut}, "url": f"https://{ident}.site.pages.dev"}
+
+    deploiements = [
+        deploiement("rate", "2026-10-01T10:00"),  # celui qui vient d'echouer
+        deploiement("controle", "2026-10-01T09:59", environnement="preview"),
+        deploiement("echoue", "2026-09-20T10:00", statut="failure"),
+        deploiement("sain", "2026-09-15T10:00"),
+        deploiement("ancien", "2026-08-01T10:00"),
+    ]
+    cible = retablir_production.deploiement_sain(deploiements, "https://rate.site.pages.dev/")
+    assert cible["id"] == "sain"
+    assert retablir_production.deploiement_sain(deploiements[:1], "https://rate.site.pages.dev") is None
 
 
 # --------------------------------------------------------------------------

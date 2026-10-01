@@ -62,6 +62,68 @@ La CI publie le site sur Cloudflare Pages après les tests. Elle attend, dans
 - secrets `CLOUDFLARE_API_TOKEN` (droit *Cloudflare Pages · Edit*) et
   `CLOUDFLARE_ACCOUNT_ID` ;
 - variable `CLOUDFLARE_PROJECT_NAME` (nom du projet Pages) ;
-- secret `JETON_MISE_A_JOUR` : jeton GitHub à droits fins sur le dépôt (*Contents* et
-  *Pull requests* en écriture), pour les pull requests des mises à jour automatiques ;
+- secret `JETON_MISE_A_JOUR` : jeton GitHub à droits fins sur le seul dépôt
+  (*Contents*, *Pull requests* et *Workflows* en écriture), avec la plus longue durée
+  proposée. Il pousse les branches des mises à jour automatiques, fait tourner leur CI,
+  et fusionne celles qui touchent aux workflows. La veille prévient un mois avant son
+  expiration ;
 - variable facultative `ADRESSE_SITE`, pour une autre adresse que celle du site.
+
+## Maintenance automatique
+
+Le site se tient à jour seul ; il ne demande une intervention qu'en cas d'imprévu, et
+le dit alors par une issue (donc un courriel au propriétaire du dépôt).
+
+| Quand | Quoi | Workflow |
+|---|---|---|
+| le 3 du mois | nouvelles DVF d'Etalab ? fenêtre glissée, site reconstruit, tests, pull request | `donnees.yml` |
+| le 10 du mois | gares ouvertes ou annoncées ? même chemin | `reseau.yml` |
+| chaque mois | nouvelles versions des actions et des dépendances Python | Dependabot |
+| après chaque CI, et chaque jour | fusion des pull requests automatiques vertes, une à la fois | `fusion-auto.yml` |
+| chaque lundi | veille : site en ligne, fraîcheur des données, fonds de carte, jeton, pull requests en attente, CI de `main`, workflows réactivés, fin de vie de Python | `veille.yml` |
+
+Garde-fous, du premier au dernier rempart :
+
+1. **Qui** : seules les pull requests nées d'une automatisation (Dependabot, données,
+   gares, version de Python) sont fusionnées d'office ; jamais une pull request faite à
+   la main.
+2. **Quoi** : chacune reste dans son périmètre. Les données ne touchent qu'à `data/`,
+   les gares qu'à `data/geo/gares.json`, Dependabot qu'à des lignes de version (une
+   action épinglée par empreinte, une borne de dépendance). Une ligne de plus — une
+   étape de CI, un test, une option de pip — et la fusion attend un humain.
+3. **Quand** : une mise à jour de Dependabot attend sept jours, le temps qu'une version
+   piégée soit repérée et retirée avant de s'exécuter avec les secrets du dépôt.
+4. **Données** : une mise à jour qui s'écarte de l'ordinaire (ventes en chute, prix
+   révisés à années égales, communes disparues, contours manquants) porte l'étiquette
+   `a-verifier` et n'est pas fusionnée ; une issue prévient.
+5. **Tests** : tous les tests (Python, navigateur, cohérence Python / JavaScript) doivent
+   passer sur la pull request, puis de nouveau sur `main` après la fusion ; une fusion à
+   la fois, et seulement si `main` est vert.
+6. **Contrôle avant production** : sur `main`, le site est d'abord publié à une adresse
+   de contrôle et vérifié tel que Cloudflare le sert (fichiers, en-têtes, et parcours
+   dans un vrai navigateur : carte colorée, filtre recalculé, ventes au zoom). Un échec
+   arrête tout : la production reste sur la version précédente.
+7. **Retour arrière** : si la production échoue malgré tout à la même vérification, le
+   dernier déploiement sain est rétabli.
+
+Au pire, donc, le site en ligne reste sur sa dernière bonne version, et une issue le
+dit.
+
+### Être prévenu
+
+Tout ce qui demande une action ouvre (ou complète) une issue, au nom de
+`github-actions` : un `main` rouge, un contrôle avant production raté, une mise à jour
+des données à vérifier ou en échec, une panne de la fusion automatique, et tout ce que
+relève la veille du lundi (site injoignable, données figées, fond de carte mort, jeton
+proche de l'expiration, pull request qui attend depuis trois semaines). L'issue `veille`
+se referme d'elle-même quand tout est rentré dans l'ordre.
+
+Pour recevoir ces issues par courriel : sur le dépôt, *Watch → All Activity* (ou
+*Custom → Issues*), et dans *Settings → Notifications* de GitHub, *Watching* coché
+pour *Email*, avec une adresse vérifiée.
+
+Ce qui reste hors de portée de l'automatisation, et que la veille signale : le
+renouvellement du nom de domaine (à confier au renouvellement automatique du
+registraire), le jeton GitHub à recréer à son expiration, un changement d'adresse ou de
+format des sources (Etalab, IDFM, fonds de carte), ou la fin d'un service gratuit
+(Cloudflare Pages, GitHub Actions).

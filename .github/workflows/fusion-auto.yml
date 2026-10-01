@@ -1,0 +1,66 @@
+# Fusion automatique des pull requests nées d'une automatisation.
+#
+# Dependabot (actions et dépendances Python), la mise à jour des données, celle
+# des gares et celle de la version de Python ouvrent des pull requests. Leur CI
+# lance tous les tests ; ce workflow fusionne celles qui sont vertes, une à la
+# fois, et seulement si la CI de `main` est verte elle aussi. La CI du `main`
+# ainsi modifié déploie le site, puis relance ce workflow pour la suivante.
+#
+# Les règles (quelles pull requests, relance d'une CI rouge, étiquette
+# `a-verifier` qui retient la fusion) sont dans `scripts/fusion_auto.py`.
+# Une pull request faite à la main n'est jamais fusionnée d'office.
+#
+# Jetons : le jeton par défaut lit, relance et lance les CI. Le secret
+# JETON_MISE_A_JOUR (voir le README) fusionne : sans lui, GitHub refuse de
+# fusionner les mises à jour qui touchent aux workflows.
+name: Fusion automatique
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  schedule:
+    # Rattrapage quotidien, à 6 h 23 UTC.
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+    inputs:
+      simulation:
+        description: "Dire ce qui serait fait, sans rien fusionner"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+  issues: write
+
+concurrency:
+  group: fusion-auto
+  cancel-in-progress: false
+
+jobs:
+  fusionner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Le code de la branche par défaut, jamais celui d'une pull request.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Fusion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JETON_MISE_A_JOUR: ${{ secrets.JETON_MISE_A_JOUR }}
+          SIMULATION: ${{ inputs.simulation && '--simulation' || '' }}
+        run: |
+          set -o pipefail
+          python3 scripts/fusion_auto.py $SIMULATION | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Issue en cas d'échec
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          echo "La fusion automatique a échoué : $RUN" > "$RUNNER_TEMP/issue.md"
+          scripts/signaler.sh veille "Veille : le site demande votre attention" "$RUNNER_TEMP/issue.md"

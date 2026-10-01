@@ -24,6 +24,7 @@ import os
 import re
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -100,11 +101,13 @@ def navigateur():
 class Page:
     """Une page ouverte sur le site, et la carte qu'elle contient."""
 
-    def __init__(self, page, erreurs: list[str], requetes: list[str]):
+    def __init__(self, page, erreurs: list[str], requetes: list[str], terminees: list[str]):
         self.page = page
         self.erreurs = erreurs
         #: Adresses demandees par la page, la carte et le Worker, dans l'ordre.
         self.requetes = requetes
+        #: Adresses dont la reponse est arrivee (ou a echoue).
+        self.terminees = terminees
 
     def carte(self, expression: str, argument=None):
         """Evalue `expression` (une fonction de `carte`) dans la page."""
@@ -134,6 +137,32 @@ class Page:
             [longitude, latitude, zoom],
         )
         self.attendre("(carte) => !carte.isMoving() && carte.areTilesLoaded()")
+
+    def attendre_ventes(self) -> int:
+        """Attend que toutes les tuiles de ventes demandees soient posees sur
+        la carte, et rend le nombre de ventes de la source.
+
+        La carte montre des ventes des la premiere tuile arrivee : compter
+        avant la derniere, c'est compter un quartier a moitie charge — et
+        attendre ensuite de retrouver ce compte, c'est attendre pour rien.
+        """
+
+        def en_vol() -> int:
+            return sum("/donnees/dvf-pts-" in url for url in self.requetes) - sum(
+                "/donnees/dvf-pts-" in url for url in self.terminees
+            )
+
+        compter = "(carte) => carte.isSourceLoaded('points') ? carte.querySourceFeatures('points').length : -1"
+        limite = time.monotonic() + ATTENTE_MS / 1000
+        precedent, compte = None, -1
+        # Une tuile arrivee n'est posee qu'au rendu suivant, puis decoupee par
+        # MapLibre : le compte doit aussi rester le meme d'une lecture a l'autre.
+        while en_vol() or compte < 0 or compte != precedent:
+            if time.monotonic() > limite:
+                raise AssertionError(f"ventes jamais posees : {en_vol()} tuile(s) en vol, compte {compte}")
+            self.page.wait_for_timeout(500)
+            precedent, compte = compte, self.carte(compter)
+        return compte
 
     def suivi(self) -> dict:
         return self.page.evaluate("() => Object.assign({}, window.siteDvf)")
@@ -165,10 +194,13 @@ def _ouvrir(navigateur, adresse, **contexte) -> Page:
     page = session.new_page()
     erreurs: list[str] = []
     requetes: list[str] = []
+    terminees: list[str] = []
     page.on("pageerror", lambda erreur: erreurs.append(str(erreur)))
     session.on("request", lambda requete: requetes.append(requete.url))
+    session.on("requestfinished", lambda requete: terminees.append(requete.url))
+    session.on("requestfailed", lambda requete: terminees.append(requete.url))
     page.goto(adresse)
-    ouverte = Page(page, erreurs, requetes)
+    ouverte = Page(page, erreurs, requetes, terminees)
     ouverte.attendre(
         "(carte) => carte.isStyleLoaded() && carte.getSource('communes')"
         " && carte.isSourceLoaded('communes') && carte.isSourceLoaded('sections')"
@@ -581,10 +613,10 @@ def test_les_ventes_arrivent_en_tuiles_et_se_filtrent_dans_le_navigateur(bureau,
     bureau.aller(2.3488, 48.8534, 16.5)  # Ile de la Cite
     bureau.attendre("(carte) => carte.queryRenderedFeatures({layers: ['transactions']}).length > 0")
     assert tuiles(), "les ventes viennent de tuiles statiques"
+    avant = bureau.attendre_ventes()
 
     # Une annee de moins : moins de ventes, et pas une tuile de plus.
     demandees = len(tuiles())
-    avant = bureau.carte("(carte) => carte.querySourceFeatures('points').length")
     annee = bureau.page.locator("#filtre-annees button", has_text=_bouton(annees[0]))
     annee.click()
     bureau.attendre("(carte, avant) => carte.querySourceFeatures('points').length < avant", avant)

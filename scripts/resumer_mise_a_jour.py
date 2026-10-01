@@ -14,12 +14,19 @@ nouveau, tous deux passés par les mêmes règles de nettoyage que le site, et
   égales (pour distinguer une révision des données d'un simple glissement
   de fenêtre) ;
 - les communes apparues ou disparues, et les sections sans contour, dont les
-  ventes comptent mais qui ne sont pas dessinées.
+  ventes comptent mais qui ne sont pas dessinées ;
+- les garde-fous : des écarts qu'un glissement de fenêtre n'explique pas.
+
+La pull request est fusionnée sans relecture quand la CI est verte (voir
+`.github/workflows/fusion-auto.yml`), sauf si un garde-fou est levé : dans
+GitHub Actions, la sortie `a_verifier` vaut alors `oui`, et le workflow pose
+l'étiquette `a-verifier`, qui retient la fusion.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -66,6 +73,51 @@ def _periode(ventes: pd.DataFrame) -> str:
 
 def _departement(ventes: pd.DataFrame) -> pd.Series:
     return ventes["code_commune"].astype(str).map(geo.departement_de)
+
+
+#: Garde-fous. Chaque mise à jour fait glisser la fenêtre : une année complète
+#: sort, une année (parfois partielle) entre. Le nombre de ventes varie donc
+#: d'une vingtaine de pour cent, et les prix sur toute la fenêtre aussi. À
+#: années égales, en revanche, Etalab ne fait que de petites révisions.
+BAISSE_VENTES_MAX = 0.30  # ventes exploitables, sur toute la fenêtre
+BAISSE_ANNEE_MAX = 0.10  # ventes d'une même année, avant et après
+ECART_PRIX_EGAL_MAX = 0.05  # prix médian d'un département, à années égales
+COMMUNES_DISPARUES_MAX = 3  # une fusion de communes en fait disparaître une ou deux
+PART_SANS_CONTOUR_MAX = 0.005  # ventes comptées mais non dessinées
+
+
+def garde_fous(
+    anciennes: pd.DataFrame, nouvelles: pd.DataFrame, orphelines: dict[str, int]
+) -> list[str]:
+    """Ce qui, dans la mise à jour, mérite un œil humain avant publication."""
+
+    alertes = []
+    if len(nouvelles) < (1 - BAISSE_VENTES_MAX) * len(anciennes):
+        alertes.append(f"ventes exploitables {_ecart(len(anciennes), len(nouvelles))}")
+
+    egales = sorted(set(anciennes["annee"].dropna()) & set(nouvelles["annee"].dropna()))
+    avant = anciennes["annee"].value_counts()
+    apres = nouvelles["annee"].value_counts()
+    for annee in egales:
+        if apres.get(annee, 0) < (1 - BAISSE_ANNEE_MAX) * avant.get(annee, 0):
+            alertes.append(f"ventes de {int(annee)} {_ecart(avant[annee], apres.get(annee, 0))}")
+
+    egal_a = anciennes[anciennes["annee"].isin(egales)]
+    egal_b = nouvelles[nouvelles["annee"].isin(egales)]
+    med_a = egal_a.groupby(_departement(egal_a))["prix_m2"].median()
+    med_b = egal_b.groupby(_departement(egal_b))["prix_m2"].median()
+    for dep in sorted(set(med_a.index) & set(med_b.index)):
+        if med_a[dep] and abs(med_b[dep] / med_a[dep] - 1) > ECART_PRIX_EGAL_MAX:
+            alertes.append(f"prix médian du {dep} à années égales {_ecart(med_a[dep], med_b[dep])}")
+
+    disparues = set(anciennes["code_commune"].dropna()) - set(nouvelles["code_commune"].dropna())
+    if len(disparues) > COMMUNES_DISPARUES_MAX:
+        alertes.append(f"{len(disparues)} communes disparues")
+
+    sans_contour = sum(orphelines.values())
+    if len(nouvelles) and sans_contour > PART_SANS_CONTOUR_MAX * len(nouvelles):
+        alertes.append(f"{_entier(sans_contour)} ventes dans des sections sans contour")
+    return alertes
 
 
 def resumer(
@@ -140,15 +192,20 @@ def resumer(
     else:
         lignes.append("- Sections sans contour : aucune")
 
-    lignes += [
-        "",
-        "### Avant de fusionner",
-        "",
-        "- [ ] La prévisualisation (commentaire de la CI) s'ouvre, et son pied de page "
-        "annonce la nouvelle période.",
-        "- [ ] Les écarts « à années égales » restent faibles (quelques pour cent au plus).",
-        "- [ ] Les communes apparues ou disparues, et les sections sans contour, sont expliquées.",
-    ]
+    alertes = garde_fous(anciennes, nouvelles, orphelines)
+    lignes += ["", "### Garde-fous", ""]
+    if alertes:
+        lignes += [f"- ⚠️ {alerte}" for alerte in alertes]
+        lignes += [
+            "",
+            "**Fusion automatique retenue** (étiquette `a-verifier`). Vérifier la "
+            "prévisualisation, puis fusionner à la main — ou fermer la pull request.",
+        ]
+    else:
+        lignes += [
+            "Aucun écart inhabituel : cette pull request sera fusionnée automatiquement "
+            "dès que la CI sera verte, et le site republié.",
+        ]
     return "\n".join(lignes) + "\n"
 
 
@@ -176,8 +233,12 @@ def main(arguments: list[str] | None = None) -> int:
 
     anciennes = ventes_nettoyees(options.ancien)
     nouvelles = ventes_nettoyees(fichier_mutations(options.territoire))
-    print(resumer(anciennes, nouvelles, sections_orphelines(nouvelles),
-                  options.millesime, options.raisons))
+    orphelines = sections_orphelines(nouvelles)
+    print(resumer(anciennes, nouvelles, orphelines, options.millesime, options.raisons))
+    if os.environ.get("GITHUB_OUTPUT"):
+        a_verifier = "oui" if garde_fous(anciennes, nouvelles, orphelines) else "non"
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as flux:
+            flux.write(f"a_verifier={a_verifier}\n")
     return 0
 
 

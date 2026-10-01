@@ -1,0 +1,108 @@
+# Veille hebdomadaire : tout ce qui pourrait casser le site en silence.
+#
+# Le site en ligne et la fraîcheur de ses données, les fonds de carte, le
+# jeton JETON_MISE_A_JOUR, les pull requests qui traînent, la CI de `main`,
+# les workflows coupés par GitHub après 60 jours d'inactivité (réactivés au
+# passage), la fin de vie de la version de Python. Le détail est dans
+# `scripts/veiller.py`.
+#
+# - tout va bien : rien, sinon le rapport dans le résumé du job ; une issue
+#   `veille` restée ouverte est refermée ;
+# - un problème : une issue `veille` est ouverte (ou complétée), ce qui
+#   prévient le propriétaire du dépôt par courriel ;
+# - Python approche de sa fin de vie : une pull request `maintenance/…` passe
+#   à une version plus récente ; la fusion automatique s'en charge si la CI
+#   est verte.
+name: Veille
+
+on:
+  schedule:
+    # Le lundi à 6 h 47 UTC.
+    - cron: "47 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: veille
+  cancel-in-progress: false
+
+jobs:
+  veiller:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          token: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Dépendances
+        run: pip install -r requirements.txt
+
+      - name: Veille
+        id: veille
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JETON_MISE_A_JOUR: ${{ secrets.JETON_MISE_A_JOUR }}
+          ADRESSE_SITE: ${{ vars.ADRESSE_SITE }}
+        run: |
+          python scripts/veiller.py > "$RUNNER_TEMP/rapport.md"
+          cat "$RUNNER_TEMP/rapport.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROBLEME: ${{ steps.veille.outputs.probleme }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$PROBLEME" = "oui" ]; then
+            printf '\n[Journal de la veille](%s)\n' "$RUN" >> "$RUNNER_TEMP/rapport.md"
+            scripts/signaler.sh veille "Veille : le site demande votre attention" "$RUNNER_TEMP/rapport.md"
+          else
+            for numero in $(gh issue list --label veille --state open --json number --jq '.[].number'); do
+              gh issue close "$numero" --reason completed \
+                --comment "Tout est rentré dans l'ordre : $RUN"
+            done
+          fi
+
+      - name: Version de Python
+        if: steps.veille.outputs.python != ''
+        env:
+          GH_TOKEN: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
+          VERSION: ${{ steps.veille.outputs.python }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          version=$(printf '%s' "$VERSION" | tr -cd '0-9.')
+          branche="maintenance/python-$version"
+          if git ls-remote --exit-code --heads origin "$branche" > /dev/null; then
+            echo "::notice title=Déjà proposé::La branche $branche existe."
+            exit 0
+          fi
+          ancienne=$(cat .python-version)
+          echo "$version" > .python-version
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branche"
+          git commit -q -am "Python $version pour les workflows"
+          git push -u origin "$branche"
+          gh pr create --base "$BASE" --head "$branche" --title "Python $ancienne → $version" \
+            --body "Python $ancienne arrive en fin de vie dans moins d'un an. Cette pull request fait passer les workflows à Python $version, la plus récente des versions parues depuis plus d'un an. Fusionnée automatiquement si la CI est verte."
+
+      - name: Issue en cas d'échec
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          echo "La veille elle-même a échoué : $RUN" > "$RUNNER_TEMP/echec.md"
+          scripts/signaler.sh veille "Veille : le site demande votre attention" "$RUNNER_TEMP/echec.md"

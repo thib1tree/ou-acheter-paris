@@ -9,5 +9,5 @@
 
 pandas>=2.1,<4
 numpy>=1.24,<3
-pyarrow>=14,<26           # Territoires précalculés (parquet)
+pyarrow>=25.0.1,<26           # Territoires précalculés (parquet)
 requests>=2.28,<3         # DVF géolocalisées, Cadastre Etalab, gares, index d'Etalab

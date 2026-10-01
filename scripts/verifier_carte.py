@@ -22,7 +22,11 @@ from __future__ import annotations
 import json
 import os
 import sys
-import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import verifier_deploiement  # noqa: E402
 
 ATTENTE_MS = 120_000
 TRANCHE_MS = 5_000
@@ -32,8 +36,9 @@ def verifier(adresse: str) -> list[str]:
     from playwright.sync_api import sync_playwright
 
     racine = adresse.rstrip("/")
-    with urllib.request.urlopen(f"{racine}/manifeste.json", timeout=60) as reponse:
-        manifeste = json.loads(reponse.read())
+    # Lu comme le lit verifier_deploiement.py : avec un User-Agent (Cloudflare
+    # refuse celui de urllib par defaut, « Python-urllib »), et en reessayant.
+    manifeste = json.loads(verifier_deploiement.lire(f"{racine}/manifeste.json", delai=60)[2])
     debut = "/".join(reversed(manifeste["periode"]["debut"].split("-")))
     fin = "/".join(reversed(manifeste["periode"]["fin"].split("-")))
 

@@ -40,6 +40,8 @@ def _appeler(methode: str, chemin: str) -> dict:
     requete = urllib.request.Request(API + chemin, method=methode, headers={
         "Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}",
         "Content-Type": "application/json",
+        # Cloudflare refuse parfois l'agent par defaut de urllib (« Python-urllib »).
+        "User-Agent": "ou-acheter-paris-retablissement/1.0",
     })
     with urllib.request.urlopen(requete, timeout=60) as reponse:
         return json.loads(reponse.read())

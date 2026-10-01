@@ -107,8 +107,20 @@ Garde-fous, du premier au dernier rempart :
    dernier déploiement sain est rétabli.
 
 Au pire, donc, le site en ligne reste sur sa dernière bonne version, et une issue le
-dit (la veille signale un `main` rouge et les pull requests qui attendent depuis plus de
-trois semaines).
+dit.
+
+### Être prévenu
+
+Tout ce qui demande une action ouvre (ou complète) une issue, au nom de
+`github-actions` : un `main` rouge, un contrôle avant production raté, une mise à jour
+des données à vérifier ou en échec, une panne de la fusion automatique, et tout ce que
+relève la veille du lundi (site injoignable, données figées, fond de carte mort, jeton
+proche de l'expiration, pull request qui attend depuis trois semaines). L'issue `veille`
+se referme d'elle-même quand tout est rentré dans l'ordre.
+
+Pour recevoir ces issues par courriel : sur le dépôt, *Watch → All Activity* (ou
+*Custom → Issues*), et dans *Settings → Notifications* de GitHub, *Watching* coché
+pour *Email*, avec une adresse vérifiée.
 
 Ce qui reste hors de portée de l'automatisation, et que la veille signale : le
 renouvellement du nom de domaine (à confier au renouvellement automatique du

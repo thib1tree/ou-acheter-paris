@@ -33,6 +33,7 @@ permissions:
   contents: write
   pull-requests: write
   actions: write
+  issues: write
 
 concurrency:
   group: fusion-auto
@@ -54,3 +55,12 @@ jobs:
         run: |
           set -o pipefail
           python3 scripts/fusion_auto.py $SIMULATION | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Issue en cas d'échec
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          echo "La fusion automatique a échoué : $RUN" > "$RUNNER_TEMP/issue.md"
+          scripts/signaler.sh veille "Veille : le site demande votre attention" "$RUNNER_TEMP/issue.md"

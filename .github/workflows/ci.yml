@@ -234,3 +234,30 @@ jobs:
             const ancien = commentaires.find((c) => c.body && c.body.includes(marque));
             if (ancien) await github.rest.issues.updateComment({ owner, repo, comment_id: ancien.id, body: corps });
             else await github.rest.issues.createComment({ owner, repo, issue_number, body: corps });
+
+  # Un `main` rouge (tests, contrôle avant production, déploiement) prévient
+  # tout de suite par une issue `veille`, que la veille refermera d'elle-même
+  # quand `main` sera redevenu vert. La production, elle, n'a pas bougé.
+  signaler:
+    needs: [tests, deployer]
+    if: failure() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "La CI de \`main\` a échoué : $RUN"
+            echo
+            echo "Le site en ligne n'a pas changé : il reste sur sa dernière version vérifiée."
+            echo "Plus rien n'est fusionné automatiquement tant que \`main\` est rouge."
+          } > "$RUNNER_TEMP/issue.md"
+          scripts/signaler.sh veille "Veille : le site demande votre attention" "$RUNNER_TEMP/issue.md"

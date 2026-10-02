@@ -39,7 +39,7 @@ jobs:
     steps:
       # Aucun jeton laissé dans `.git/config` : les étapes suivantes (pip,
       # tests) n'ont pas à pouvoir écrire dans le dépôt.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -129,7 +129,7 @@ jobs:
             echo "::notice title=Déploiement sauté::Secrets CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID ou variable CLOUDFLARE_PROJECT_NAME absents (voir le README)."
           fi
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.reglages.outputs.pret == 'oui'
         with:
           persist-credentials: false
@@ -254,7 +254,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 

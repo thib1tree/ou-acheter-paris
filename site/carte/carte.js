@@ -572,11 +572,7 @@
     if (carte.getSource("fond")) carte.removeSource("fond");
     carte.addSource("fond", sourceFond(fond));
     var dessous = carte.getStyle().layers[0];
-    // `peinture` : un fond en couleurs se pose en gris sous les prix (Plan IGN).
-    carte.addLayer(
-      { id: "fond", type: "raster", source: "fond", paint: fond.peinture || {} },
-      dessous && dessous.id
-    );
+    carte.addLayer({ id: "fond", type: "raster", source: "fond" }, dessous && dessous.id);
   }
 
   /* ---------------------------------------------------------------- Opacites

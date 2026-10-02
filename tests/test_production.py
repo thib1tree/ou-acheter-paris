@@ -153,11 +153,7 @@ def test_une_zone_n_est_coloree_qu_a_partir_de_cinq_ventes():
     assert donnees_carte.SEUIL_GRISAGE == 4
 
 
-def test_la_carte_s_ouvre_sur_un_fond_public_en_gris():
-    """Le Plan IGN, desature : discret sous les couleurs des prix, servi par un
-    service public francais, sans cle."""
+def test_la_carte_s_ouvre_sur_le_fond_clair():
+    """Le gris clair d'Esri, le plus discret sous les couleurs des prix."""
 
-    assert donnees_carte.FOND_PAR_DEFAUT == "Plan IGN (gris)"
-    fond = donnees_carte.FONDS_DE_CARTE[donnees_carte.FOND_PAR_DEFAUT]
-    assert fond["url"].startswith("https://data.geopf.fr/")
-    assert fond["peinture"]["raster-saturation"] == -1
+    assert donnees_carte.FOND_PAR_DEFAUT == "Clair (Esri)"

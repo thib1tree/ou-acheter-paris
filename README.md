@@ -22,7 +22,7 @@ but non lucratif de données publiques.
 | Périmètre : 425 communes | [Unité urbaine de Paris](https://www.insee.fr/fr/metadonnees/geographie/unite-urbaine-2020/00851-paris) (INSEE) | Licence Ouverte 2.0 |
 | Contours des quartiers | [Cadastre](https://cadastre.data.gouv.fr/) (Etalab) | Licence Ouverte 2.0 |
 | Gares et projets | [Île-de-France Mobilités](https://data.iledefrance-mobilites.fr/) | Licence Ouverte 2.0 |
-| Fonds de carte | IGN (Plan IGN, par défaut), Esri, OpenStreetMap | Conditions de chaque fournisseur |
+| Fonds de carte | Esri (par défaut), OpenStreetMap, IGN | Conditions de chaque fournisseur |
 
 Seules les ventes d'appartements et de maisons sont retenues. Sont écartées celles qui
 ne reflètent pas un prix de marché : ventes mêlant logement et local commercial, ventes

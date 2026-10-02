@@ -372,7 +372,7 @@ def test_le_fond_se_change_sans_rien_recalculer(bureau):
     tuiles = bureau.carte("(carte) => carte.getStyle().sources.fond.tiles[0]")
     assert "openstreetmap" in tuiles
     assert bureau.suivi()["calculs"] == calculs
-    bureau.page.locator("#choix-fond").select_option("Plan IGN (gris)")
+    bureau.page.locator("#choix-fond").select_option("Clair (Esri)")
 
 
 def test_la_legende_montre_l_echelle_et_les_transports_et_se_replie(bureau):

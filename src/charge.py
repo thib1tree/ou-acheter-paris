@@ -72,27 +72,7 @@ SEUIL_GRISAGE = 4
 # MapLibre agrandit les tuiles de ce niveau plutot que d'en demander qui
 # n'existent pas — sans quoi le fond vire au gris uni (« Map data not yet
 # available ») exactement quand on zoome pour voir les rues sous les ventes.
-#
-# `peinture` regle le rendu des tuiles dans MapLibre (proprietes `raster-*`).
-#
-# Le premier fond est celui de l'ouverture : le Plan IGN, service public
-# francais, ouvert et sans cle, plutot qu'un fond americain tolere sans
-# compte. Il est en couleurs ; desature et eclairci, il devient un gris
-# discret sous les couleurs des prix, comme le fond clair d'Esri qu'il
-# remplace — et l'adresse IP du visiteur ne quitte plus la France par defaut.
 FONDS_DE_CARTE: dict[str, dict] = {
-    "Plan IGN (gris)": {
-        "url": "https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile"
-        "&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM"
-        "&FORMAT=image/png&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}",
-        "attr": "&copy; IGN — Géoplateforme (Plan IGN)",
-        "zoom_max": 19,
-        "peinture": {
-            "raster-saturation": -1,
-            "raster-contrast": -0.2,
-            "raster-brightness-min": 0.25,
-        },
-    },
     "Clair (Esri)": {
         "url": "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/"
         "World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
@@ -125,8 +105,8 @@ ORIGINES_FONDS: tuple[str, ...] = tuple(
     sorted({"/".join(fond["url"].split("/")[:3]) for fond in FONDS_DE_CARTE.values()})
 )
 
-#: Fond pose a l'ouverture : le Plan IGN en gris, discret sous les couleurs
-#: des prix. Les autres fonds se choisissent **sur la carte** : changer
+#: Fond pose a l'ouverture : le gris clair d'Esri, le plus discret sous les
+#: couleurs des prix. Les autres fonds se choisissent **sur la carte** : changer
 #: de fond ne change que des tuiles.
 FOND_PAR_DEFAUT = next(iter(FONDS_DE_CARTE))
 

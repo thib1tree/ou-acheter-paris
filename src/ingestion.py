@@ -760,6 +760,75 @@ def charger_mutations_territoire(
     return mutations, rapport
 
 
+# --------------------------------------------------------------------------
+# Ventes retirees a la demande des personnes concernees
+# --------------------------------------------------------------------------
+#
+# Les DVF sont des donnees personnelles : une vente, son adresse et sa date
+# designent un proprietaire. Qui s'oppose a l'affichage d'une vente le
+# concernant (RGPD, article 21) la voit retiree de la carte et des
+# statistiques, des la construction suivante du site.
+#
+# Une vente s'y designe par sa date, sa commune et son adresse, telles que
+# l'infobulle les montre : `id_mutation` ne convient pas, Etalab le renumerote
+# a chaque millesime. `scripts/retirer_vente.py` retrouve la vente et ecrit la
+# ligne.
+
+#: Format d'une ligne : `AAAA-MM-JJ;code INSEE;adresse`.
+LIGNE_RETRAIT = re.compile(r"^(\d{4}-\d{2}-\d{2});([0-9][0-9AB][0-9]{3});(.+)$")
+
+
+def chemin_retraits() -> str:
+    return os.environ.get("DVF_RETRAITS") or os.path.join(racine_projet(), "data", "retraits.csv")
+
+
+def _adresse_comparable(adresse) -> str:
+    """« 12  rue X » et « 12 Rue X » designent la meme adresse."""
+
+    return " ".join(str(adresse).split()).casefold()
+
+
+def ventes_retirees(chemin: str | None = None) -> set[tuple[str, str, str]]:
+    """Les ventes a retirer : `(date ISO, code commune, adresse comparable)`.
+
+    Une ligne mal formee fait echouer la construction plutot que de laisser
+    une vente en ligne qu'on croyait retiree.
+    """
+
+    chemin = chemin or chemin_retraits()
+    if not os.path.exists(chemin):
+        return set()
+    retraits = set()
+    with open(chemin, encoding="utf-8") as fichier:
+        for numero, ligne in enumerate(fichier, 1):
+            ligne = ligne.strip()
+            if not ligne or ligne.startswith("#"):
+                continue
+            correspondance = LIGNE_RETRAIT.match(ligne)
+            if not correspondance:
+                raise ValueError(
+                    f"{chemin}, ligne {numero} : attendu « AAAA-MM-JJ;code INSEE;adresse », "
+                    f"lu {ligne[:60]!r}"
+                )
+            jour, commune, adresse = correspondance.groups()
+            retraits.add((jour, commune, _adresse_comparable(adresse)))
+    return retraits
+
+
+def retirer_ventes(mutations: pd.DataFrame, retraits: set[tuple[str, str, str]]) -> pd.DataFrame:
+    """`mutations` sans les ventes de `retraits` (voir `ventes_retirees`)."""
+
+    if not retraits or mutations.empty:
+        return mutations
+    cles = zip(
+        pd.to_datetime(mutations["date_mutation"]).dt.strftime("%Y-%m-%d"),
+        mutations["code_commune"].astype(str),
+        mutations["adresse"].map(_adresse_comparable),
+    )
+    garde = np.fromiter((cle not in retraits for cle in cles), dtype=bool, count=len(mutations))
+    return mutations[garde]
+
+
 def construire_transactions_territoire(
     cle: str, options: OptionsNettoyage | None = None
 ) -> tuple[pd.DataFrame, RapportQualite]:
@@ -767,6 +836,7 @@ def construire_transactions_territoire(
 
     options = options or OptionsNettoyage()
     mutations, rapport = charger_mutations_territoire(cle, COLONNES_LUES)
+    mutations = retirer_ventes(mutations, ventes_retirees())
     if mutations.empty:
         return pd.DataFrame(columns=["id_mutation", "prix_m2"]), rapport
     transactions = appliquer_filtres_qualite(mutations, options, rapport)

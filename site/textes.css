@@ -1,0 +1,68 @@
+/* Les pages de texte (mentions legales) : une colonne lisible, aux couleurs
+ * de la carte. La politique de securite du site refuse les styles ecrits dans
+ * le HTML : tout est ici. */
+
+:root {
+  --rouge: #bd0026;
+  --texte: #1f1f1f;
+  --discret: #666;
+  --trait: #d6d6d6;
+  --fond: #fff;
+  --encart: #fafafa;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --rouge: #ff6b81;
+    --texte: #e8e8e8;
+    --discret: #a8a8a8;
+    --trait: #3a3a3a;
+    --fond: #161616;
+    --encart: #1f1f1f;
+  }
+}
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--fond);
+  color: var(--texte);
+  font-family: "Source Sans Pro", system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+header {
+  border-bottom: 1px solid var(--trait);
+  padding: 10px 16px;
+  padding-top: calc(10px + env(safe-area-inset-top));
+}
+
+main {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 8px 16px 48px;
+  padding-bottom: calc(48px + env(safe-area-inset-bottom));
+  overflow-wrap: break-word;
+}
+
+a { color: var(--rouge); }
+.retour { font-weight: 600; text-decoration: none; }
+.retour:hover, .retour:focus-visible { text-decoration: underline; }
+
+h1 { font-size: 1.6rem; line-height: 1.25; margin: 24px 0 8px; }
+h2 { font-size: 1.15rem; margin: 32px 0 6px; padding-top: 12px; border-top: 1px solid var(--trait); }
+.chapeau { color: var(--discret); font-size: 1.05rem; }
+
+dl { margin: 12px 0; padding: 12px 16px; background: var(--encart); border: 1px solid var(--trait);
+  border-radius: 8px; }
+dt { font-weight: 600; }
+dd { margin: 0 0 10px; }
+dd:last-child { margin-bottom: 0; }
+
+ul { padding-left: 20px; }
+li { margin-bottom: 6px; }
+
+.maj { margin-top: 40px; color: var(--discret); font-size: 0.9rem; }

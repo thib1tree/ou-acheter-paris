@@ -1,0 +1,22 @@
+# Prix immobiliers du Grand Paris — ce qu'il faut pour préparer les données et
+# construire le site statique (`scripts/`). Le site lui-même n'a besoin
+# d'aucun serveur : Python ne sert qu'ici, dans GitHub Actions ou en local.
+# Les outils de test sont dans `requirements-dev.in`.
+#
+# Ce fichier dit ce que le projet accepte ; `requirements.txt` fige ce qui est
+# installé, version exacte et empreinte de chaque paquet, dépendances
+# indirectes comprises. Les workflows n'installent que le fichier figé : une
+# version publiée du jour au lendemain — ou piégée — n'entre qu'avec une pull
+# request de Dependabot, après sa quarantaine. Pour régénérer après une
+# modification d'ici (Linux, Python de `.python-version`) :
+#
+#     pip-compile --generate-hashes --allow-unsafe requirements.in
+#     pip-compile --generate-hashes --allow-unsafe requirements-dev.in
+#
+# Bornes hautes sur les versions majeures : une mise à jour majeure ne doit
+# pas casser la construction. On les relève volontairement, tests à l'appui.
+
+pandas>=2.1,<4
+numpy>=1.24,<3
+pyarrow>=14,<26           # Territoires précalculés (parquet)
+requests>=2.28,<3         # DVF géolocalisées, Cadastre Etalab, gares, index d'Etalab

@@ -118,6 +118,7 @@ def test_la_verification_apres_deploiement_accepte_le_site(site, capsys):
         assert verifier_deploiement.main(adresse) == 0
     rapport = capsys.readouterr().out
     assert "manifeste.json" in rapport and "| 200 |" in rapport
+    assert "`mentions-legales.html` | 200 |" in rapport
 
 
 def test_la_verification_attend_le_certificat_d_un_premier_deploiement(monkeypatch):
@@ -196,13 +197,15 @@ def test_la_page_n_execute_que_des_scripts_du_site(site):
     stricte (`script-src 'self'`, `style-src 'self'`)."""
 
     sortie, _ = site
-    page = (sortie / "index.html").read_text(encoding="utf-8")
-    for balise in re.findall(r"<script\b[^>]*>", page):
-        assert 'src="' in balise or 'type="application/ld+json"' in balise, balise
-        assert "://" not in balise, balise
-    assert not re.search(r"\son[a-z]+\s*=", page)
-    assert not re.search(r"\sstyle\s*=", page)
-    assert "{{" not in page
+    for nom in construire_site.PAGES:
+        page = (sortie / nom).read_text(encoding="utf-8")
+        for balise in re.findall(r"<script\b[^>]*>", page):
+            assert 'src="' in balise or 'type="application/ld+json"' in balise, (nom, balise)
+            assert "://" not in balise, (nom, balise)
+        assert not re.search(r"<style\b", page), nom
+        assert not re.search(r"\son[a-z]+\s*=", page), nom
+        assert not re.search(r"\sstyle\s*=", page), nom
+        assert "{{" not in page, nom
 
 
 def test_les_en_tetes_protegent_la_page_et_cachent_les_donnees_aux_moteurs(site):
@@ -240,10 +243,36 @@ def test_a_propos_cite_les_regles_appliquees_par_le_code(site):
         construire_site._milliers(options.prix_m2_min),
         construire_site._milliers(options.prix_m2_max),
         construire_site._milliers(manifeste["nb_ventes"]),
-        "Aucune donnée personnelle n'est collectée par ce site.",
+        'href="mentions-legales.html"',
     ):
         assert texte in apropos, texte
     assert construire_site.URL_DEPOT in page
+
+
+def test_les_mentions_legales_sont_publiees_et_liees_depuis_la_carte(site):
+    """LCEN : l'editeur (ou, pour un particulier, l'hebergeur et un contact) ;
+    RGPD : le traitement des ventes, les droits et la facon de les exercer."""
+
+    sortie, _ = site
+    page = (sortie / "index.html").read_text(encoding="utf-8")
+    pied = page[page.index('<footer id="pied">'):page.index("</footer>")]
+    assert 'href="mentions-legales.html"' in pied
+
+    mentions = (sortie / "mentions-legales.html").read_text(encoding="utf-8")
+    assert (sortie / "textes.css").exists()
+    assert f'href="mailto:{construire_site.CONTACT}"' in mentions
+    for texte in (
+        "Cloudflare, Inc.", "101 Townsend Street",          # hebergeur
+        "OVH SAS",                                          # nom de domaine
+        "article 6, III, 2 de la loi n° 2004-575",          # editeur non professionnel
+        "Responsable du traitement", "Base légale", "Durée",
+        "vous opposer", "CNIL", "R. 112 A-3",
+        "Esri", "OpenStreetMap", "IGN",                     # qui recoit l'IP du visiteur
+        "licence MIT", construire_site.URL_DEPOT,
+    ):
+        assert texte in mentions, texte
+    # Le visiteur peut agrandir le texte : pas de zoom bloque sur cette page.
+    assert "user-scalable=no" not in mentions and "maximum-scale" not in mentions
 
 
 def test_l_adresse_publique_n_entre_dans_la_page_que_si_elle_est_sure(tmp_path):

@@ -7,7 +7,8 @@ où acheter : prix au m² par commune et par quartier, chaque vente une à une e
 évolution des prix, et les gares actuelles et à venir (Grand Paris Express, tramways,
 RER).
 
-Gratuit, sans publicité, sans compte. Aucune donnée n'est collectée sur les visiteurs.
+Gratuit, sans publicité, sans compte, sans cookie ni mesure d'audience. Voir les
+[mentions légales et la confidentialité](site/mentions-legales.html).
 
 ## D'où viennent les chiffres
 
@@ -54,6 +55,13 @@ python -m http.server -d dist 8000           # puis http://localhost:8000
 
 Tests : `python -m playwright install chromium`, puis `python -m pytest -q`.
 
+Les versions installées sont figées, empreinte de chaque paquet comprise, dans
+`requirements.txt` et `requirements-dev.txt`. Ces deux fichiers sont produits par
+`pip-compile` (Linux, Python de `.python-version`) à partir de `requirements.in` et
+`requirements-dev.in`, qui disent ce que le projet accepte ; on ne les modifie pas à la
+main (la commande est en tête de `requirements.in`). Sur un autre système,
+`pip install -r requirements-dev.in` installe les mêmes outils sans les figer.
+
 ## Publier sa propre copie
 
 La CI publie le site sur Cloudflare Pages après les tests. Elle attend, dans
@@ -68,6 +76,25 @@ La CI publie le site sur Cloudflare Pages après les tests. Elle attend, dans
   et fusionne celles qui touchent aux workflows. La veille prévient un mois avant son
   expiration ;
 - variable facultative `ADRESSE_SITE`, pour une autre adresse que celle du site.
+
+## Mentions légales et données personnelles
+
+Les mentions légales (éditeur, hébergeur, sources, données personnelles) sont dans
+[`site/mentions-legales.html`](site/mentions-legales.html), publiée avec le site ;
+l'adresse de contact est `CONTACT`, dans `scripts/construire_site.py`.
+
+Les ventes affichées sont des données personnelles : une personne concernée peut
+demander le retrait d'une vente. Pour la retirer :
+
+```bash
+python scripts/retirer_vente.py --commune Montreuil --adresse "rue de paris" --date 2024-03
+python scripts/retirer_vente.py --commune Montreuil --adresse "12 rue de paris" --date 2024-03-15 --ajouter
+```
+
+La première commande liste les ventes trouvées ; la seconde écrit la vente dans
+`data/retraits.csv`. Une fois ce fichier fusionné sur `main`, la vente disparaît de la
+carte et des statistiques, et le reste aux mises à jour suivantes. Il faut répondre à la
+personne sous un mois.
 
 ## Maintenance automatique
 
@@ -92,7 +119,10 @@ Garde-fous, du premier au dernier rempart :
    action épinglée par empreinte, une borne de dépendance). Une ligne de plus — une
    étape de CI, un test, une option de pip — et la fusion attend un humain.
 3. **Quand** : une mise à jour de Dependabot attend sept jours, le temps qu'une version
-   piégée soit repérée et retirée avant de s'exécuter avec les secrets du dépôt.
+   piégée soit repérée et retirée avant de s'exécuter avec les secrets du dépôt. Les
+   workflows n'installent que des versions figées, vérifiées par leur empreinte : aucun
+   paquet n'entre autrement. Et le jeton `JETON_MISE_A_JOUR` n'est donné qu'aux étapes
+   qui poussent une branche ou ouvrent une pull request, jamais à `pip` ni aux tests.
 4. **Données** : une mise à jour qui s'écarte de l'ordinaire (ventes en chute, prix
    révisés à années égales, communes disparues, contours manquants) porte l'étiquette
    `a-verifier` et n'est pas fusionnée ; une issue prévient.
@@ -127,3 +157,8 @@ renouvellement du nom de domaine (à confier au renouvellement automatique du
 registraire), le jeton GitHub à recréer à son expiration, un changement d'adresse ou de
 format des sources (Etalab, IDFM, fonds de carte), ou la fin d'un service gratuit
 (Cloudflare Pages, GitHub Actions).
+
+## Licence
+
+Le code est sous [licence MIT](LICENSE). Les données de `data/` restent sous la licence
+de leur source (tableau ci-dessus).

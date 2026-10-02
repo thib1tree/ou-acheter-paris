@@ -3,6 +3,12 @@
 # mois une pull request quand une nouvelle version paraît ; la fusion
 # automatique (fusion-auto.yml) la fusionne si la CI est verte.
 #
+# Côté Python, les workflows n'installent que les fichiers figés
+# (`requirements.txt`, `requirements-dev.txt` : versions exactes et empreintes,
+# produits par pip-compile depuis les `.in`) ; Dependabot les régénère. Une
+# version publiée n'entre donc qu'ici, après les sept jours de quarantaine de
+# la fusion automatique.
+#
 # Les mises à jour mineures sont groupées en une pull request par écosystème ;
 # une version majeure a la sienne : si elle casse la CI, elle reste ouverte
 # (la veille la signale au bout de trois semaines) sans bloquer les autres.

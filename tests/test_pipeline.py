@@ -1579,7 +1579,7 @@ def test_les_libelles_des_donnees_sont_echappes_avant_d_entrer_dans_la_carte():
     # Les libelles issus des tuiles de ventes et des couches.
     for expression in (
         "echapper(tuile.ad_l[tuile.ad[v]]",
-        "echapper(tuile.ty_l[tuile.ty[v]]",
+        "echapper(natureDe(tuile, v))",
         "echapper(adresse)",
         "echapper(couche.entetes[indice])",
         "echapper(proprietes.nom)",

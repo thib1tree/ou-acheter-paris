@@ -203,7 +203,8 @@
     }
     return {
       meta: meta, n: n, bornesCommunes: c.communes, section: c.section,
-      annee: c.annee, type: c.type, valeur: valeur, surface: surface, m2: m2,
+      annee: c.annee, type: c.type, etat: c.etat || new Uint8Array(n),
+      valeur: valeur, surface: surface, m2: m2,
       nbSections: meta.sections.codes.length, nbCommunes: meta.communes.codes.length,
     };
   }
@@ -213,13 +214,18 @@
   /* `stats.filtrer`, rendu comme la liste des lignes retenues, dans l'ordre du
    * fichier (commune, puis prix au m² croissant). */
   function filtrer(v, filtres) {
-    var anOk = new Uint8Array(256), tyOk = new Uint8Array(256);
+    var anOk = new Uint8Array(256), tyOk = new Uint8Array(256), etOk = new Uint8Array(256);
     var annees = filtres.annees && filtres.annees.length ? filtres.annees : null;
     var types = filtres.types && filtres.types.length ? filtres.types : null;
+    var etats = filtres.etats && filtres.etats.length ? filtres.etats : null;
     if (annees) annees.forEach(function (a) { var k = a - v.meta.annee0; if (k >= 0 && k < 256) anOk[k] = 1; });
     else anOk.fill(1);
     if (types) types.forEach(function (t) { var k = v.meta.types.indexOf(t); if (k >= 0) tyOk[k] = 1; });
     else tyOk.fill(1);
+    // Un fichier sans colonne d'etat ne connait que l'ancien (`stats.etats_des_ventes`).
+    var etatsConnus = v.meta.etats || ["Ancien"];
+    if (etats) etats.forEach(function (e) { var k = etatsConnus.indexOf(e); if (k >= 0) etOk[k] = 1; });
+    else etOk.fill(1);
     var surface = filtres.surface || null;
     var mini = surface ? surface[0] : -Infinity;
     var maxi = surface && !filtres.ouvert ? surface[1] : Infinity;
@@ -231,7 +237,7 @@
       debuts[g] = k;
       for (var i = v.bornesCommunes[g]; i < v.bornesCommunes[g + 1]; i++) {
         var s = v.surface[i];
-        if (anOk[v.annee[i]] && tyOk[v.type[i]] && s >= mini && s <= maxi) retenues[k++] = i;
+        if (anOk[v.annee[i]] && tyOk[v.type[i]] && etOk[v.etat[i]] && s >= mini && s <= maxi) retenues[k++] = i;
       }
     }
     debuts[v.nbCommunes] = k;

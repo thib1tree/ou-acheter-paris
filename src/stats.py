@@ -8,6 +8,8 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
+from src.ingestion import ETAT_ANCIEN
+
 # --------------------------------------------------------------------------
 # Metriques exposees dans l'interface
 # --------------------------------------------------------------------------
@@ -88,6 +90,8 @@ class Filtres:
     surface: tuple[float, float] | None = None
     surface_max_ouvert: bool = True
     types_bien: Sequence[str] | None = None
+    #: Neuf (VEFA) et/ou ancien (`ingestion.ETAT_NEUF`, `ETAT_ANCIEN`).
+    etats: Sequence[str] | None = None
 
 
 def filtrer(transactions: pd.DataFrame, filtres: Filtres) -> pd.DataFrame:
@@ -114,7 +118,18 @@ def filtrer(transactions: pd.DataFrame, filtres: Filtres) -> pd.DataFrame:
     if filtres.types_bien:
         masque &= df["type_bien"].isin(list(filtres.types_bien))
 
+    if filtres.etats:
+        masque &= etats_des_ventes(df).isin(list(filtres.etats))
+
     return df[masque.fillna(False)]
+
+
+def etats_des_ventes(transactions: pd.DataFrame) -> pd.Series:
+    """L'etat (neuf ou ancien) de chaque vente ; « Ancien » faute de colonne."""
+
+    if "etat" in transactions.columns:
+        return transactions["etat"].astype(str)
+    return pd.Series(ETAT_ANCIEN, index=transactions.index)
 
 
 # --------------------------------------------------------------------------

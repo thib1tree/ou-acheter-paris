@@ -572,7 +572,11 @@
     if (carte.getSource("fond")) carte.removeSource("fond");
     carte.addSource("fond", sourceFond(fond));
     var dessous = carte.getStyle().layers[0];
-    carte.addLayer({ id: "fond", type: "raster", source: "fond" }, dessous && dessous.id);
+    // `peinture` : un fond en couleurs se pose en gris sous les prix (Plan IGN).
+    carte.addLayer(
+      { id: "fond", type: "raster", source: "fond", paint: fond.peinture || {} },
+      dessous && dessous.id
+    );
   }
 
   /* ---------------------------------------------------------------- Opacites
@@ -660,6 +664,16 @@
   var EN_SERVICE = ["==", ["get", "statut"], "service"];
   var A_VENIR = ["!=", ["get", "statut"], "service"];
   var VIOLET_PROJET = "#7b4fa8";
+  //: Une gare encore a l'etude (`projet`) n'a ni chantier ni date sure : elle
+  //: se dessine plus pale qu'une gare en travaux, qui ouvrira, elle.
+  var VIOLET_ETUDE = "#b49bd3";
+  var COULEUR_A_VENIR = ["match", ["get", "statut"], "projet", VIOLET_ETUDE, VIOLET_PROJET];
+
+  /* La couleur d'une gare selon son statut (`service`, `travaux`, `projet`). */
+  function couleurStatut(statut) {
+    if (statut === "projet") return VIOLET_ETUDE;
+    return statut && statut !== "service" ? VIOLET_PROJET : BLEU_GARE;
+  }
   var BLEU_GARE = "#1b6ca8";
   //: Cerne des ventes. Presque noir plutot que blanc : a ce zoom, le fond est
   //: un plan de rues clair ou une orthophoto, et c'est le trait sombre qui
@@ -876,7 +890,7 @@
         "icon-ignore-placement": true,
       },
       paint: {
-        "icon-color": VIOLET_PROJET,
+        "icon-color": COULEUR_A_VENIR,
         "icon-halo-color": "#ffffff",
         "icon-halo-width": haloGare(),
         "icon-opacity": ["interpolate", ["linear"], ["zoom"], 9.5, 0, 11, 0.6, 12, 0.9],
@@ -1253,14 +1267,14 @@
 
   /* Les lignes desservies disent mieux que le reseau ce qu'on a devant soi :
    * « RER B, Métro 4 » plutot que « RATP ». */
-  var LIBELLES_STATUT = { travaux: "en travaux", projet: "en projet" };
+  var LIBELLES_STATUT = { travaux: "en travaux", projet: "en projet, pas encore en chantier" };
   //: Le meme dessin que sur la carte et dans la legende : l'infobulle
   //: rappelle ce qu'on vient de toucher.
   function infobulleGare(proprietes) {
     var statut = LIBELLES_STATUT[proprietes.statut];
     var desserte = proprietes.lignes || proprietes.reseau;
     var genre = TRACES[proprietes.genre] ? proprietes.genre : "train";
-    var marque = symboleLegende(genre, statut ? VIOLET_PROJET : BLEU_GARE);
+    var marque = symboleLegende(genre, couleurStatut(proprietes.statut));
     return '<div class="entete">' + marque + echapper(proprietes.nom) + "</div>"
       + (desserte ? "<div>" + echapper(desserte) + "</div>" : "")
       + (statut ? '<div class="projet">Gare ' + statut + "</div>" : "")
@@ -1576,7 +1590,7 @@
       var genre = TRACES[p.genre] ? p.genre : "train";
       var lignes = r.a_venir ? (p.statut === "service" ? p.a_venir : p.lignes) : p.lignes;
       return '<div class="' + (r.a_venir ? "projet" : "") + '">'
-        + symboleLegende(genre, r.a_venir ? VIOLET_PROJET : BLEU_GARE)
+        + symboleLegende(genre, r.a_venir ? (p.statut === "projet" ? VIOLET_ETUDE : VIOLET_PROJET) : BLEU_GARE)
         + '<span class="nom">' + echapper(p.nom || "Gare") + "</span>"
         + (lignes ? " (" + echapper(lignes) + ")" : "")
         + " · ≈ " + r.minutes + " min à pied" + (r.a_venir ? ", à venir" : "") + "</div>";
@@ -2025,7 +2039,8 @@
       + "<span>" + symboleLegende("train", BLEU_GARE) + "Train, RER</span>"
       + "<span>" + symboleLegende("metro", BLEU_GARE) + "Métro</span>"
       + "<span>" + symboleLegende("tram", BLEU_GARE) + "Tram</span>"
-      + "<span>" + symboleLegende("metro", VIOLET_PROJET) + "À venir</span>"
+      + "<span>" + symboleLegende("metro", VIOLET_PROJET) + "En travaux</span>"
+      + "<span>" + symboleLegende("metro", VIOLET_ETUDE) + "En projet</span>"
       + "</div>";
     // Le degrade se pose par le CSSOM, pas par un attribut `style` : la
     // politique de securite du site refuse les styles ecrits dans le HTML.
@@ -2178,6 +2193,7 @@
     return {
       annees: brut.an ? new Set(brut.an) : null,
       types: brut.ty ? new Set(brut.ty) : null,
+      etats: brut.et ? new Set(brut.et) : null,
       suMin: brut.su ? brut.su[0] : null,
       suMax: brut.su ? brut.su[1] : null,
       suOuvert: brut.su ? !!brut.su[2] : true,
@@ -2257,12 +2273,26 @@
   function retenue(tuile, v, filtre, typesOk) {
     if (filtre.annees && !filtre.annees.has(tuile.an[v])) return false;
     if (filtre.types && !typesOk[tuile.ty[v]]) return false;
+    if (filtre.etats && !filtre.etats.has(etatDe(tuile, v))) return false;
     if (filtre.suMin !== null) {
       var surface = tuile.su[v];
       if (surface < 0 || surface < filtre.suMin) return false;
       if (!filtre.suOuvert && surface > filtre.suMax) return false;
     }
     return true;
+  }
+
+  /* Neuf (VEFA) ou ancien. Une tuile sans colonne d'etat ne connait que
+   * l'ancien, comme `stats.etats_des_ventes`. */
+  function etatDe(tuile, v) {
+    return tuile.et ? tuile.et_l[tuile.et[v]] : "Ancien";
+  }
+
+  /* « Appartement neuf (VEFA) » : le neuf se dit dans le titre d'une vente,
+   * l'ancien est le cas ordinaire et se tait. */
+  function natureDe(tuile, v) {
+    var type = tuile.ty_l[tuile.ty[v]] || "Bien";
+    return etatDe(tuile, v) === "Ancien" ? type : type + " neuf (VEFA)";
   }
 
   /* La couleur d'une vente se lit sur la meme echelle que celle des sections :
@@ -2325,7 +2355,7 @@
 
   function venteDetaillee(tuile, v, adresse) {
     var pieces = tuile.pi[v] >= 0 ? Number(tuile.pi[v]) : "?";
-    return '<div class="entete">' + echapper(tuile.ty_l[tuile.ty[v]] || "Bien")
+    return '<div class="entete">' + echapper(natureDe(tuile, v))
       + " — " + formater(positif(tuile.su[v]), "surface") + "</div>"
       + "<div>" + formaterDate(tuile.dt[v]) + "</div>"
       + "<div>" + formater(positif(tuile.va[v]), "euros")
@@ -2341,7 +2371,7 @@
       ? " · <i>" + echapper(tuile.ad_l[tuile.ad[v]] || "adresse non renseignée") + "</i>"
       : "";
     return '<div class="vente">' + formaterDate(tuile.dt[v]) + " · "
-      + echapper(tuile.ty_l[tuile.ty[v]] || "Bien") + " "
+      + echapper(natureDe(tuile, v)) + " "
       + formater(positif(tuile.su[v]), "surface") + ", " + pieces + " · "
       + formater(positif(tuile.va[v]), "euros")
       + " (" + formater(positif(tuile.m2[v]), "euros_m2") + ")" + adresse + "</div>";

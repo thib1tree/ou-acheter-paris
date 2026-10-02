@@ -493,3 +493,56 @@ def test_les_garde_fous_retiennent_une_mise_a_jour_inhabituelle():
         {"75101000A1": 10},
     )
     assert "Fusion automatique retenue" in description
+
+
+# --------------------------------------------------------------------------
+# MapLibre copie dans le depot, taille du depot, workflows analyses
+# --------------------------------------------------------------------------
+
+
+def test_une_faille_connue_de_maplibre_ouvre_une_issue():
+    def lire(adresse, donnees=None):
+        if adresse == veiller.URL_OSV:
+            assert donnees["version"] == "4.7.1" and donnees["package"]["ecosystem"] == "npm"
+            return {"vulns": [{"id": "GHSA-xxxx-yyyy-zzzz"}]}
+        return {"version": "6.11.2"}
+
+    rapport = veiller.Rapport()
+    veiller.verifier_maplibre(rapport, lire, "4.7.1")
+    assert rapport.problemes and "GHSA-xxxx-yyyy-zzzz" in rapport.problemes[0]
+
+
+def test_une_version_plus_recente_de_maplibre_n_est_qu_une_information():
+    rapport = veiller.Rapport()
+    veiller.verifier_maplibre(rapport, lambda a, d=None: {} if a == veiller.URL_OSV else {"version": "6.11.2"},
+                              "4.7.1")
+    assert not rapport.problemes and "6.11.2" in rapport.constats[0]
+
+    # La base OSV injoignable ne crie pas au loup : la semaine suivante reessaiera.
+    def panne(adresse, donnees=None):
+        raise OSError("réseau")
+
+    rapport = veiller.Rapport()
+    veiller.verifier_maplibre(rapport, panne, "4.7.1")
+    assert not rapport.problemes and "injoignable" in rapport.constats[0]
+
+
+def test_la_version_de_maplibre_se_lit_dans_sa_provenance():
+    version = veiller.version_maplibre()
+    assert version.count(".") == 2
+    entete = (RACINE / "site" / "carte" / "vendor" / "maplibre-gl.js").read_text(encoding="utf-8")[:300]
+    assert f"v{version}" in entete
+
+
+def test_un_depot_trop_lourd_est_signale():
+    rapport = veiller.Rapport()
+    veiller.verifier_taille_depot(rapport, ApiFactice({f"/repos/{DEPOT}": {"size": 50_000}}))
+    assert not rapport.problemes and "49 Mio" in rapport.constats[0]
+    rapport = veiller.Rapport()
+    veiller.verifier_taille_depot(rapport, ApiFactice({f"/repos/{DEPOT}": {"size": 900_000}}))
+    assert rapport.problemes and "LFS" in rapport.problemes[0]
+
+
+def test_la_ci_analyse_les_workflows_avec_un_binaire_verifie():
+    ci = (RACINE / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "actionlint" in ci and "sha256sum -c" in ci

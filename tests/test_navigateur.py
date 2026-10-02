@@ -372,7 +372,7 @@ def test_le_fond_se_change_sans_rien_recalculer(bureau):
     tuiles = bureau.carte("(carte) => carte.getStyle().sources.fond.tiles[0]")
     assert "openstreetmap" in tuiles
     assert bureau.suivi()["calculs"] == calculs
-    bureau.page.locator("#choix-fond").select_option("Clair (Esri)")
+    bureau.page.locator("#choix-fond").select_option("Plan IGN (gris)")
 
 
 def test_la_legende_montre_l_echelle_et_les_transports_et_se_replie(bureau):
@@ -384,8 +384,9 @@ def test_la_legende_montre_l_echelle_et_les_transports_et_se_replie(bureau):
         "titre", "degrade", "graduations", "transports",
     ]
     transports = legende.locator(".transports")
-    assert transports.locator("svg").count() == 4
-    assert "À venir" in transports.inner_text()
+    assert transports.locator("svg").count() == 5
+    # Une gare en travaux ouvrira ; une gare en projet n'a pas encore de chantier.
+    assert "En travaux" in transports.inner_text() and "En projet" in transports.inner_text()
     # Le gris s'explique au survol.
     assert "Gris" in legende.get_attribute("title")
 
@@ -814,6 +815,25 @@ def test_un_filtre_est_recalcule_dans_le_worker_avec_les_chiffres_de_python(bure
     bureau.page.wait_for_function("(n) => window.siteDvf.nb === n", arg=len(ventes), timeout=ATTENTE_MS)
     assert "et plus." in bureau.page.locator("#surface-rappel").inner_text()
     assert bureau.suivi()["calculs"] > calculs
+
+
+def test_le_neuf_se_separe_de_l_ancien(bureau, ventes):
+    """Le neuf vendu sur plan (VEFA) est plus cher : decoche, la carte ne
+    montre que l'ancien, avec les memes chiffres que Python."""
+
+    zone = bureau.page.locator("#filtre-etats")
+    assert zone.is_visible()
+    assert zone.locator("input").evaluate_all("(cases) => cases.map((c) => c.value)") == [
+        "Ancien", "Neuf (VEFA)",
+    ]
+    calculs = bureau.suivi()["calculs"]
+    zone.locator("input[value='Neuf (VEFA)']").uncheck()
+    bureau.attendre_calcul(calculs)
+    bureau.page.wait_for_function(
+        "(n) => window.siteDvf.nb === n", arg=int((ventes["etat"] == "Ancien").sum()), timeout=ATTENTE_MS
+    )
+    zone.locator("input[value='Neuf (VEFA)']").check()
+    bureau.page.wait_for_function("(n) => window.siteDvf.nb === n", arg=len(ventes), timeout=ATTENTE_MS)
 
 
 def test_aucune_vente_retenue_se_dit_dans_le_panneau(bureau):

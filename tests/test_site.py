@@ -249,6 +249,19 @@ def test_a_propos_cite_les_regles_appliquees_par_le_code(site):
     assert construire_site.URL_DEPOT in page
 
 
+def test_les_pages_se_laissent_agrandir(site):
+    """WCAG 1.4.4 : le texte s'agrandit au pincement ; la carte, elle, garde
+    le sien (`touch-action: none` sur son conteneur)."""
+
+    sortie, _ = site
+    for nom in construire_site.PAGES:
+        page = (sortie / nom).read_text(encoding="utf-8")
+        viewport = re.search(r'<meta name="viewport" content="([^"]*)"', page).group(1)
+        assert "user-scalable" not in viewport and "maximum-scale" not in viewport, (nom, viewport)
+    css = (RACINE / "site" / "carte" / "carte.css").read_text(encoding="utf-8")
+    assert re.search(r"#carte \{[^}]*touch-action: none", css)
+
+
 def test_les_mentions_legales_sont_publiees_et_liees_depuis_la_carte(site):
     """LCEN : l'editeur (ou, pour un particulier, l'hebergeur et un contact) ;
     RGPD : le traitement des ventes, les droits et la facon de les exercer."""

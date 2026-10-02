@@ -20,6 +20,7 @@ import re
 import pandas as pd
 
 from src import geo, points
+from src.ingestion import ETAT_ANCIEN, ETAT_NEUF
 from src.stats import (
     ANNEES_MIN_TENDANCE,
     CLE_COMMUNE,
@@ -35,6 +36,7 @@ from src.stats import (
     couleurs_rendement,
     couleurs_sections,
     echelle_et_grisees,
+    etats_des_ventes,
     filtrer,
     formater_euros,
     formater_taux_annuel,
@@ -70,7 +72,27 @@ SEUIL_GRISAGE = 4
 # MapLibre agrandit les tuiles de ce niveau plutot que d'en demander qui
 # n'existent pas — sans quoi le fond vire au gris uni (« Map data not yet
 # available ») exactement quand on zoome pour voir les rues sous les ventes.
+#
+# `peinture` regle le rendu des tuiles dans MapLibre (proprietes `raster-*`).
+#
+# Le premier fond est celui de l'ouverture : le Plan IGN, service public
+# francais, ouvert et sans cle, plutot qu'un fond americain tolere sans
+# compte. Il est en couleurs ; desature et eclairci, il devient un gris
+# discret sous les couleurs des prix, comme le fond clair d'Esri qu'il
+# remplace — et l'adresse IP du visiteur ne quitte plus la France par defaut.
 FONDS_DE_CARTE: dict[str, dict] = {
+    "Plan IGN (gris)": {
+        "url": "https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile"
+        "&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM"
+        "&FORMAT=image/png&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}",
+        "attr": "&copy; IGN — Géoplateforme (Plan IGN)",
+        "zoom_max": 19,
+        "peinture": {
+            "raster-saturation": -1,
+            "raster-contrast": -0.2,
+            "raster-brightness-min": 0.25,
+        },
+    },
     "Clair (Esri)": {
         "url": "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/"
         "World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
@@ -103,8 +125,8 @@ ORIGINES_FONDS: tuple[str, ...] = tuple(
     sorted({"/".join(fond["url"].split("/")[:3]) for fond in FONDS_DE_CARTE.values()})
 )
 
-#: Fond pose a l'ouverture : le gris clair d'Esri, le plus discret sous les
-#: couleurs des prix. Les autres fonds se choisissent **sur la carte** : changer
+#: Fond pose a l'ouverture : le Plan IGN en gris, discret sous les couleurs
+#: des prix. Les autres fonds se choisissent **sur la carte** : changer
 #: de fond ne change que des tuiles.
 FOND_PAR_DEFAUT = next(iter(FONDS_DE_CARTE))
 
@@ -205,14 +227,23 @@ def types_disponibles(transactions: pd.DataFrame) -> list[str]:
     return sorted(transactions["type_bien"].dropna().unique())
 
 
+def etats_disponibles(transactions: pd.DataFrame) -> list[str]:
+    """« Ancien » puis « Neuf (VEFA) », ceux qui ont des ventes."""
+
+    presents = set(etats_des_ventes(transactions).unique())
+    return [etat for etat in (ETAT_ANCIEN, ETAT_NEUF) if etat in presents]
+
+
 def filtres_par_defaut(transactions: pd.DataFrame) -> Filtres:
-    """Les filtres a l'ouverture : toutes les annees, toutes surfaces, tous types."""
+    """Les filtres a l'ouverture : toutes les annees, toutes surfaces, tous
+    types, le neuf comme l'ancien."""
 
     return Filtres(
         annees=tuple(annees_disponibles(transactions)),
         surface=(0.0, float(plafond_surface(transactions))),
         surface_max_ouvert=True,
         types_bien=types_disponibles(transactions),
+        etats=etats_disponibles(transactions),
     )
 
 
@@ -232,6 +263,7 @@ def filtres_des_ventes(filtres: Filtres) -> dict:
         "an": list(filtres.annees) if filtres.annees else None,
         "su": [float(surface[0]), float(surface[1]), bool(filtres.surface_max_ouvert)],
         "ty": list(filtres.types_bien) if filtres.types_bien else None,
+        "et": list(filtres.etats) if filtres.etats else None,
     }
 
 

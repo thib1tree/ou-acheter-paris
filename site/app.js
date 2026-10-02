@@ -32,7 +32,7 @@
   var reperes = { gares: null, etiquettes: null };
   var defaut = null;         // statistiques precalculees des filtres d'ouverture
   var affiche = null;        // dernier resultat pose sur la carte
-  var etat = { annees: [], surfaceMin: 0, surfaceMax: 0, types: [], metrique: null };
+  var etat = { annees: [], surfaceMin: 0, surfaceMax: 0, types: [], etats: [], metrique: null };
 
   var worker = null;
   var workerPret = false;
@@ -73,6 +73,8 @@
   function filtresCalcul() {
     var annees = etat.annees.length ? etat.annees.slice() : manifeste.filtres.annees.slice();
     var types = etat.types.length ? etat.types.slice() : manifeste.filtres.types.slice();
+    var tousEtats = manifeste.filtres.etats || [];
+    var etats = etat.etats.length ? etat.etats.slice() : tousEtats.slice();
     var bas = etat.surfaceMin, haut = etat.surfaceMax;
     if (haut < bas) { var t = bas; bas = haut; haut = t; }
     return {
@@ -80,18 +82,21 @@
       surface: [bas, haut],
       ouvert: haut >= manifeste.filtres.surface_plafond,
       types: types.sort(),
+      etats: etats.sort(),
     };
   }
 
   /* Les memes filtres, sous la forme que la carte rejoue sur les ventes
    * individuelles (`charge.filtres_des_ventes`). */
   function filtresDesVentes(f) {
-    return { an: f.annees, su: [f.surface[0], f.surface[1], f.ouvert], ty: f.types };
+    return { an: f.annees, su: [f.surface[0], f.surface[1], f.ouvert], ty: f.types,
+      et: f.etats.length ? f.etats : null };
   }
 
   function sontParDefaut(f) {
     var d = manifeste.filtres;
     return f.annees.join() === d.annees.join() && f.types.join() === d.types.slice().sort().join()
+      && f.etats.join() === (d.etats || []).slice().sort().join()
       && f.surface[0] === 0 && f.ouvert;
   }
 
@@ -304,6 +309,28 @@
       zoneTypes.appendChild(etiquette);
     });
     etat.types = filtres.types.slice();
+
+    // Neuf ou ancien : le neuf (ventes sur plan) se paie plus cher, et
+    // domine la ou l'on construit, autour des gares a venir.
+    var zoneEtats = document.querySelector("#filtre-etats .cases");
+    (filtres.etats || []).forEach(function (valeur) {
+      var etiquette = document.createElement("label");
+      var caseEtat = document.createElement("input");
+      caseEtat.type = "checkbox";
+      caseEtat.checked = true;
+      caseEtat.value = valeur;
+      caseEtat.addEventListener("change", function () {
+        etat.etats = Array.prototype.filter.call(
+          zoneEtats.querySelectorAll("input"), function (c) { return c.checked; }
+        ).map(function (c) { return c.value; });
+        recalculer();
+      });
+      etiquette.appendChild(caseEtat);
+      etiquette.appendChild(document.createTextNode(valeur));
+      zoneEtats.appendChild(etiquette);
+    });
+    etat.etats = (filtres.etats || []).slice();
+    document.getElementById("filtre-etats").hidden = (filtres.etats || []).length < 2;
     majRappelSurface(filtresCalcul());
   }
 

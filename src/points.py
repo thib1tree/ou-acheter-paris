@@ -224,7 +224,7 @@ def _ecrire_tuiles(
     # d'une tuile a l'autre, et `pd.factorize` sur la colonne entiere coute
     # moins qu'un `Categorical` par tuile.
     dictionnaires = {}
-    for court, long in (("ty", "type_bien"), ("ad", "adresse")):
+    for court, long in (("ty", "type_bien"), ("et", "etat"), ("ad", "adresse")):
         if long not in ventes.columns:
             continue
         codes, libelles = pd.factorize(ventes[long].fillna("").astype(str), sort=False)

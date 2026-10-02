@@ -56,7 +56,7 @@ jobs:
           SIMULATION: ${{ inputs.simulation && '--simulation' || '' }}
         run: |
           set -o pipefail
-          python3 scripts/fusion_auto.py $SIMULATION | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 scripts/fusion_auto.py ${SIMULATION:+"$SIMULATION"} | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Issue en cas d'échec
         if: failure()

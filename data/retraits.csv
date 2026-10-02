@@ -1,0 +1,12 @@
+# Ventes retirées de la carte à la demande d'une personne concernée
+# (droit d'opposition, RGPD art. 21 ; voir « Mentions légales » sur le site).
+#
+# Une ligne par vente : date de la vente;code INSEE de la commune;adresse,
+# telles que l'infobulle de la vente les affiche. Exemple :
+#
+#     2024-03-15;75111;12 Rue Oberkampf
+#
+# Plutôt que d'écrire la ligne à la main, la chercher avec
+# `python scripts/retirer_vente.py`. Ce fichier est appliqué à chaque
+# construction du site, millésime après millésime ; les mises à jour
+# automatiques n'y touchent pas.

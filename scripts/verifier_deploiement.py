@@ -4,8 +4,8 @@
     python scripts/verifier_deploiement.py https://<projet>.pages.dev
 
 Lance par le workflow de deploiement juste apres `wrangler pages deploy`. Il
-echoue si la page ou le manifeste ne repondent pas, ou si un fichier que le
-manifeste designe manque. Il ecrit aussi, en Markdown, les en-tetes que
+echoue si la page, les mentions legales ou le manifeste ne repondent pas, ou
+si un fichier que le manifeste designe manque. Il ecrit aussi, en Markdown, les en-tetes que
 Cloudflare pose reellement (compression, cache) : ce sont des comportements
 de l'hebergeur que la documentation ne garantit pas dans le detail, et qu'il
 vaut mieux constater que supposer.
@@ -102,6 +102,9 @@ def main(racine: str) -> int:
     page = constater("")
     if b'id="zone-carte"' not in page:
         raise SystemExit("La page d'accueil n'est pas celle du site.")
+    # Obligation legale (LCEN, RGPD) : la carte ne part pas sans ses mentions.
+    if "Mentions légales".encode() not in constater("mentions-legales.html"):
+        raise SystemExit("Les mentions légales ne sont pas servies.")
     manifeste = json.loads(constater("manifeste.json"))
     if manifeste.get("version") != 1:
         raise SystemExit("Manifeste illisible.")

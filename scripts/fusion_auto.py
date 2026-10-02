@@ -16,8 +16,9 @@ attend une fusion humaine. Sont aussi retenues :
 
 - une pull request qui sort de son périmètre : chaque famille ne touche que
   ses fichiers (`PERIMETRES`), et Dependabot que des lignes de version — une
-  action épinglée, une borne de dépendance. Une automatisation qui modifierait
-  un test, la CI ou le site attend un humain ;
+  action épinglée, une borne de dépendance, une version figée et ses
+  empreintes. Une automatisation qui modifierait un test, la CI ou le site, ou
+  ajouterait une dépendance directe, attend un humain ;
 - une mise à jour de Dependabot de moins de sept jours : le temps qu'une
   version piégée (une action compromise, un paquet malveillant) soit repérée
   et retirée avant de s'exécuter ici, avec les secrets du dépôt ;
@@ -62,21 +63,40 @@ QUARANTAINE = dt.timedelta(days=7)
 #: Ce que chaque famille de pull requests automatiques a le droit de toucher.
 PERIMETRES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("dependabot/github_actions/", (".github/workflows/*.yml",)),
-    ("dependabot/pip/", ("requirements.txt", "requirements-dev.txt")),
+    ("dependabot/pip/", ("requirements.in", "requirements-dev.in",
+                         "requirements.txt", "requirements-dev.txt")),
     ("donnees/", ("data/territoires/*", "data/geo/*")),
     ("reseau/", ("data/geo/gares.json",)),
     ("maintenance/python-", (".python-version",)),
 )
 
 #: Les seules lignes que Dependabot peut changer : une action épinglée par
-#: empreinte (`uses: actions/checkout@<40 car.> # v5.0.0`), ou une exigence de
-#: version d'un paquet — jamais une option de pip (`-r`, `--index-url`…).
+#: empreinte (`uses: actions/checkout@<40 car.> # v5.0.0`), ou, pour pip, une
+#: exigence de version (`pandas>=2.1,<4`, dans les `.in`), une version figée
+#: (`pandas==3.0.6 \`), son empreinte (`--hash=sha256:<64 car.>`) ou un
+#: commentaire de `pip-compile` — jamais une autre option de pip (`-r`,
+#: `--index-url`…) ni une adresse de paquet.
 LIGNE_DEPENDABOT = {
     "dependabot/github_actions/": re.compile(
         r"^\s*(- )?\s*uses: [\w.-]+/[\w./-]+@[0-9a-f]{40}( +# [\w.+-]+)?\s*$"),
     "dependabot/pip/": re.compile(
-        r"^[A-Za-z0-9][\w.\-]*(\[[\w,\-]+\])?\s*[<>=!~][<>=!~\d.,*\s]*(#.*)?$"),
+        r"^[A-Za-z0-9][\w.\-]*(\[[\w,\-]+\])?\s*[<>=!~][<>=!~\d.,*\s]*(#.*)?$"
+        r"|^[A-Za-z0-9][\w.\-]*==[\w.+!-]+(\s*;\s*[\w\s.<>=!~\"'()]+)?(\s+\\)?$"
+        r"|^\s+--hash=sha256:[0-9a-f]{64}(\s+\\)?$"
+        r"|^\s*#.*$"),
 }
+
+#: Le nom d'un paquet en tête d'une ligne d'exigence.
+NOM_PAQUET = re.compile(r"^([A-Za-z0-9][\w.\-]*)")
+
+
+def _paquets(lignes: list[str]) -> set[str]:
+    """Les paquets nommés par ces lignes d'exigence (nom normalisé, PEP 503)."""
+
+    return {
+        re.sub(r"[-_.]+", "-", m.group(1)).lower()
+        for m in map(NOM_PAQUET.match, lignes) if m
+    }
 
 
 def motif_de_refus(pr: dict, depot: str) -> str | None:
@@ -99,12 +119,12 @@ def motif_de_refus(pr: dict, depot: str) -> str | None:
     return None
 
 
-def lignes_modifiees(patch: str) -> list[str]:
+def lignes_modifiees(patch: str, signes: str = "+-") -> list[str]:
     """Les lignes ajoutées ou retirées d'un diff unifié (sans leur signe)."""
 
     return [
         ligne[1:] for ligne in patch.splitlines()
-        if ligne[:1] in "+-" and not ligne.startswith(("+++", "---"))
+        if ligne[:1] and ligne[:1] in signes and not ligne.startswith(("+++", "---"))
     ]
 
 
@@ -129,6 +149,14 @@ def hors_perimetre(branche: str, fichiers: list[dict]) -> str | None:
             for ligne in lignes_modifiees(fichier["patch"]):
                 if ligne.strip() and not regle.match(ligne):
                     return f"ligne inattendue dans {nom} : {ligne.strip()[:80]}"
+            # Les dépendances directes (`.in`) : des bornes qui bougent, jamais
+            # un paquet qui entre ou qui sort. Le fichier figé, lui, suit
+            # forcément les dépendances indirectes des nouvelles versions.
+            if nom.endswith(".in") and (
+                _paquets(lignes_modifiees(fichier["patch"], "+"))
+                != _paquets(lignes_modifiees(fichier["patch"], "-"))
+            ):
+                return f"dépendance ajoutée ou retirée dans {nom}"
     return None
 
 

@@ -11,6 +11,7 @@ Ce que le script ecrit :
 
     index.html, site.css, app.js, calcul.js,   la page et la carte MapLibre,
     calcul-worker.js, carte/                   copiees telles quelles de `site/`
+    mentions-legales.html, textes.css          mentions legales et confidentialite
     manifeste.json                             ce que la page lit en premier
     donnees/                                   les donnees, nommees par leur empreinte
       sections-*.json, communes-*.json         contours simplifies
@@ -80,6 +81,13 @@ NOM_COURT = "Où acheter ?"
 
 #: Depot public du code, cite dans le pied de page et dans « À propos ».
 URL_DEPOT = "https://github.com/thib1tree/ou-acheter-paris"
+
+#: Contact de l'editeur, cite dans les mentions legales : c'est aussi l'adresse
+#: des demandes relatives aux donnees personnelles (retrait d'une vente).
+CONTACT = "contact@ou-acheter-paris.fr"
+
+#: Pages du site dont les `{{cle}}` sont remplis a la construction.
+PAGES = ("index.html", "mentions-legales.html")
 
 #: Adresse de production, pour l'adresse canonique, les apercus de partage et
 #: le plan du site. La variable `ADRESSE_SITE` la remplace si besoin.
@@ -209,26 +217,28 @@ def _date_fr(jour) -> str:
 
 
 def ecrire_page(sortie: Path, valeurs: dict[str, str], adresse: str | None) -> None:
-    """Remplit les `{{cle}}` de `index.html` ; retire le bloc `adresse` si besoin.
+    """Remplit les `{{cle}}` des pages (`PAGES`) ; retire le bloc `adresse` si besoin.
 
     Le texte de « À propos » cite les regles de nettoyage et les chiffres du
     territoire : ils sont ecrits ici, depuis le code qui les applique, pour ne
     jamais diverger. Une cle oubliee fait echouer la construction.
     """
 
-    chemin = sortie / "index.html"
-    page = chemin.read_text(encoding="utf-8")
-    debut, fin = "<!--adresse-->", "<!--/adresse-->"
-    if adresse:
-        page = page.replace(debut, "").replace(fin, "")
-    else:
-        page = page[: page.index(debut)] + page[page.index(fin) + len(fin):]
-    for cle, valeur in {**valeurs, "adresse": adresse or ""}.items():
-        page = page.replace("{{" + cle + "}}", valeur)
-    if "{{" in page:
-        restant = page[page.index("{{"):][:40]
-        raise SystemExit(f"index.html : valeur manquante pour {restant!r}")
-    chemin.write_text(page, encoding="utf-8")
+    for nom in PAGES:
+        chemin = sortie / nom
+        page = chemin.read_text(encoding="utf-8")
+        debut, fin = "<!--adresse-->", "<!--/adresse-->"
+        if debut in page:
+            if adresse:
+                page = page.replace(debut, "").replace(fin, "")
+            else:
+                page = page[: page.index(debut)] + page[page.index(fin) + len(fin):]
+        for cle, valeur in {**valeurs, "adresse": adresse or ""}.items():
+            page = page.replace("{{" + cle + "}}", valeur)
+        if "{{" in page:
+            restant = page[page.index("{{"):][:40]
+            raise SystemExit(f"{nom} : valeur manquante pour {restant!r}")
+        chemin.write_text(page, encoding="utf-8")
 
     manifeste_appli = sortie / "site.webmanifest"
     texte = manifeste_appli.read_text(encoding="utf-8")
@@ -275,6 +285,7 @@ def valeurs_page(cle: str, transactions, bornes) -> dict[str, str]:
         "url_jeu": charge.URL_JEU_DE_DONNEES,
         "url_licence": charge.URL_LICENCE,
         "url_depot": URL_DEPOT,
+        "contact": CONTACT,
         "debut": _date_fr(bornes[0]) if bornes else "—",
         "annee_debut": f"{bornes[0]:%Y}" if bornes else "",
         "annee_fin": f"{bornes[1]:%Y}" if bornes else "",

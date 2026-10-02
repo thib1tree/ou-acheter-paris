@@ -19,6 +19,12 @@
 # sert à pousser la branche et ouvrir la pull request : une pull request
 # ouverte avec le jeton par défaut de GitHub Actions ne déclencherait pas la
 # CI. Sans lui, le workflow se rabat sur ce jeton par défaut.
+#
+# Ce jeton peut modifier les workflows : il n'est donné qu'aux deux étapes
+# qui parlent à GitHub (branche, pull request), jamais à celles qui installent
+# des paquets, lisent les fichiers d'Etalab ou lancent les tests. Le dépôt est
+# extrait sans jeton (`persist-credentials: false`) ; `scripts/git_jeton.sh`
+# le passe à git le temps d'une commande.
 name: Mise à jour des données
 
 on:
@@ -48,11 +54,10 @@ jobs:
     timeout-minutes: 120
     env:
       TERRITOIRE: grand-paris
-      GH_TOKEN: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          token: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
+          persist-credentials: false
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
@@ -65,7 +70,8 @@ jobs:
           node-version: "lts/*"
 
       - name: Dépendances
-        run: pip install -r requirements-dev.txt
+        run: |
+          pip install --require-hashes --only-binary :all: -r requirements-dev.txt
 
       - name: Etalab a-t-il publié du neuf ?
         id: verif
@@ -81,6 +87,7 @@ jobs:
         # par une substitution dans le script : lu sur un serveur tiers, il ne
         # doit pas pouvoir devenir une commande.
         env:
+          GH_TOKEN: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
           MILLESIME: ${{ steps.verif.outputs.millesime }}
           FORCER: ${{ inputs.forcer }}
           RUN_ID: ${{ github.run_id }}
@@ -92,7 +99,7 @@ jobs:
           echo "nom=$branche" >> "$GITHUB_OUTPUT"
           # Une branche déjà poussée pour ce même état : sa pull request attend
           # une relecture, on ne la refait pas chaque mois.
-          if git ls-remote --exit-code --heads origin "$branche" > /dev/null; then
+          if scripts/git_jeton.sh ls-remote --exit-code --heads origin "$branche" > /dev/null; then
             echo "::notice title=Déjà proposé::La branche $branche existe : sa pull request attend une relecture."
           else
             echo "lancer=oui" >> "$GITHUB_OUTPUT"
@@ -156,6 +163,7 @@ jobs:
       - name: Pull request
         if: steps.branche.outputs.lancer == 'oui'
         env:
+          GH_TOKEN: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
           BRANCHE: ${{ steps.branche.outputs.nom }}
           MILLESIME: ${{ steps.verif.outputs.millesime }}
           RAISONS: ${{ steps.verif.outputs.raisons }}
@@ -173,7 +181,7 @@ jobs:
             exit 0
           fi
           git commit -q -m "Données DVF : millésime $MILLESIME" -m "$RAISONS"
-          git push -u origin "$BRANCHE"
+          scripts/git_jeton.sh push -u origin "$BRANCHE"
           # Un garde-fou levé retient la fusion automatique (étiquette
           # `a-verifier`), et une issue prévient : la pull request, ouverte
           # avec le jeton personnel, ne notifie pas son propre auteur.

@@ -69,8 +69,21 @@ FICHIERS_TYPES = {
     "dependabot/github_actions/": [{"filename": ".github/workflows/ci.yml", "patch": (
         "@@ -1,3 +1,3 @@\n-      - uses: actions/checkout@" + "a" * 40 + " # v4.4.0\n"
         "+      - uses: actions/checkout@" + "b" * 40 + " # v7.0.1\n")}],
-    "dependabot/pip/": [{"filename": "requirements.txt", "patch": (
-        "@@ -9,1 +9,1 @@\n-pandas>=2.1,<3\n+pandas>=2.1,<4           # dataframes\n")}],
+    "dependabot/pip/": [
+        {"filename": "requirements.in", "patch": (
+            "@@ -9,1 +9,1 @@\n-pandas>=2.1,<3\n+pandas>=2.1,<4           # dataframes\n")},
+        {"filename": "requirements.txt", "patch": (
+            "@@ -40,6 +40,9 @@\n"
+            "-pandas==2.3.3 \\\n"
+            "-    --hash=sha256:" + "a" * 64 + " \\\n"
+            "-    --hash=sha256:" + "b" * 64 + "\n"
+            "+pandas==3.0.6 \\\n"
+            "+    --hash=sha256:" + "c" * 64 + " \\\n"
+            "+    --hash=sha256:" + "d" * 64 + "\n"
+            "+    # via -r requirements.in\n"
+            "+tzdata==2026.1 \\\n"
+            "+    --hash=sha256:" + "e" * 64 + "\n")},
+    ],
     "donnees/": [{"filename": "data/territoires/grand-paris/mutations.parquet"},
                  {"filename": "data/geo/75/75101.json"}],
     "reseau/": [{"filename": "data/geo/gares.json"}],
@@ -124,13 +137,82 @@ def test_dependabot_ne_change_que_des_lignes_de_version():
         motif = fusion_auto.hors_perimetre("dependabot/github_actions/a", [
             {"filename": workflow, "patch": "@@ -1 +1,2 @@\n+" + ligne}])
         assert motif and motif.startswith("ligne inattendue"), ligne
-    # Une option de pip (un autre index de paquets) : refuse.
-    for ligne in ("--index-url https://exemple.org/simple", "-r autre.txt", "pandas @ https://exemple.org/p.whl"):
-        assert fusion_auto.hors_perimetre("dependabot/pip/a", [
-            {"filename": "requirements.txt", "patch": "+" + ligne}]), ligne
+    # Une option de pip (un autre index de paquets, une adresse de paquet, une
+    # empreinte mal formee) : refuse, dans les bornes comme dans le fichier fige.
+    for ligne in ("--index-url https://exemple.org/simple", "-r autre.txt",
+                  "pandas @ https://exemple.org/p.whl", "pandas==3.0 --extra-index-url https://x",
+                  "    --hash=md5:0123", "-e git+https://exemple.org/p.git"):
+        for nom in ("requirements.in", "requirements.txt"):
+            assert fusion_auto.hors_perimetre("dependabot/pip/a", [
+                {"filename": nom, "patch": "+" + ligne}]), (nom, ligne)
+    # Une dependance directe qui entre (ou sort) attend un humain ; dans le
+    # fichier fige, une dependance indirecte nouvelle est normale.
+    assert fusion_auto.hors_perimetre("dependabot/pip/a", [
+        {"filename": "requirements.in", "patch": "@@ -1 +1,2 @@\n pandas>=2.1,<4\n+paquet-inconnu>=1\n"}
+    ]) == "dépendance ajoutée ou retirée dans requirements.in"
+    assert fusion_auto.hors_perimetre("dependabot/pip/a", [
+        {"filename": "requirements-dev.in", "patch": "-pyflakes>=3,<4\n"}])
+    assert fusion_auto.hors_perimetre("dependabot/pip/a", [
+        {"filename": "requirements-dev.in", "patch": "-Pyflakes>=3,<4\n+pyflakes>=3,<5\n"}]) is None
     # Dependabot hors de ses fichiers, ou sans diff lisible : refuse.
     assert fusion_auto.hors_perimetre("dependabot/pip/a", [{"filename": "src/stats.py", "patch": "+x"}])
     assert fusion_auto.hors_perimetre("dependabot/pip/a", [{"filename": "requirements.txt"}])
+
+
+# --------------------------------------------------------------------------
+# Jetons et paquets dans les workflows
+# --------------------------------------------------------------------------
+
+WORKFLOWS = sorted((RACINE / ".github" / "workflows").glob("*.yml"))
+
+
+def test_le_jeton_personnel_ne_sert_qu_aux_etapes_qui_parlent_a_github():
+    """`JETON_MISE_A_JOUR` peut modifier les workflows : jamais dans
+    l'environnement d'un job entier (il atteindrait `pip install` et les
+    tests), jamais laisse dans `.git/config` par `actions/checkout`."""
+
+    assert WORKFLOWS
+    for chemin in WORKFLOWS:
+        lignes = chemin.read_text(encoding="utf-8").splitlines()
+        for numero, ligne in enumerate(lignes):
+            if "secrets.JETON_MISE_A_JOUR" in ligne and not ligne.lstrip().startswith("#"):
+                # Indentation d'une etape (`env:` d'un `- name:`), pas d'un job.
+                retrait = len(ligne) - len(ligne.lstrip())
+                assert retrait >= 10, f"{chemin.name}:{numero + 1} : jeton hors d'une étape"
+                assert not ligne.lstrip().startswith("token:"), \
+                    f"{chemin.name}:{numero + 1} : jeton passé à une action"
+            if "uses: actions/checkout@" in ligne:
+                suite = "\n".join(lignes[numero + 1:numero + 4])
+                assert "persist-credentials: false" in suite, \
+                    f"{chemin.name}:{numero + 1} : checkout qui garde son jeton"
+
+
+def test_les_workflows_n_installent_que_des_paquets_figes():
+    for chemin in WORKFLOWS:
+        for ligne in chemin.read_text(encoding="utf-8").splitlines():
+            if "pip install" in ligne and not ligne.lstrip().startswith("#"):
+                assert "--require-hashes" in ligne and "--only-binary :all:" in ligne, \
+                    f"{chemin.name} : {ligne.strip()}"
+                assert ligne.rstrip().endswith(("requirements.txt", "requirements-dev.txt")), ligne
+
+    # Chaque paquet du fichier fige porte sa version exacte et son empreinte.
+    for nom in ("requirements.txt", "requirements-dev.txt"):
+        texte = (RACINE / nom).read_text(encoding="utf-8")
+        paquets = [l for l in texte.splitlines() if l[:1].isalnum()]
+        assert paquets, nom
+        for ligne in paquets:
+            assert "==" in ligne and ligne.endswith("\\"), f"{nom} : {ligne}"
+        assert texte.count("--hash=sha256:") >= len(paquets), nom
+    # Le fichier de developpement reprend les versions de l'execution.
+    figees = {
+        l.split(" ")[0] for l in (RACINE / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if l[:1].isalnum()
+    }
+    dev = {
+        l.split(" ")[0] for l in (RACINE / "requirements-dev.txt").read_text(encoding="utf-8").splitlines()
+        if l[:1].isalnum()
+    }
+    assert figees <= dev, figees - dev
 
 
 def test_une_pull_request_hors_perimetre_n_est_pas_fusionnee():

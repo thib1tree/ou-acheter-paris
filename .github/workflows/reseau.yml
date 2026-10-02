@@ -15,7 +15,8 @@
 # - un échec : il ouvre une issue (étiquette mise-a-jour-donnees).
 #
 # Même jeton que la mise à jour des données (JETON_MISE_A_JOUR, voir le
-# README), pour que la CI se lance sur la pull request.
+# README), pour que la CI se lance sur la pull request ; comme là-bas, il n'est
+# donné qu'aux étapes qui parlent à GitHub (voir donnees.yml).
 name: Actualisation des gares
 
 on:
@@ -37,12 +38,10 @@ jobs:
   actualiser:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      GH_TOKEN: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          token: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
+          persist-credentials: false
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
@@ -55,7 +54,8 @@ jobs:
           node-version: "lts/*"
 
       - name: Dépendances
-        run: pip install -r requirements-dev.txt
+        run: |
+          pip install --require-hashes --only-binary :all: -r requirements-dev.txt
 
       - name: Gares d'aujourd'hui
         id: gares
@@ -68,10 +68,12 @@ jobs:
       - name: Branche d'actualisation
         id: branche
         if: steps.gares.outputs.change == 'oui'
+        env:
+          GH_TOKEN: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
         run: |
           branche="reseau/$(date -u +%Y-%m)-$(sha256sum data/geo/gares.json | cut -c1-8)"
           echo "nom=$branche" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --heads origin "$branche" > /dev/null; then
+          if scripts/git_jeton.sh ls-remote --exit-code --heads origin "$branche" > /dev/null; then
             echo "::notice title=Déjà proposé::La branche $branche existe : sa pull request attend une relecture."
           else
             echo "lancer=oui" >> "$GITHUB_OUTPUT"
@@ -99,6 +101,7 @@ jobs:
       - name: Pull request
         if: steps.branche.outputs.lancer == 'oui'
         env:
+          GH_TOKEN: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
           BRANCHE: ${{ steps.branche.outputs.nom }}
           BASE: ${{ github.event.repository.default_branch }}
         run: |
@@ -108,7 +111,7 @@ jobs:
           git switch -c "$BRANCHE"
           git add data/geo/gares.json
           git commit -q -m "$titre"
-          git push -u origin "$BRANCHE"
+          scripts/git_jeton.sh push -u origin "$BRANCHE"
           gh pr create --base "$BASE" --head "$BRANCHE" --title "$titre" \
             --body-file "$RUNNER_TEMP/description.md"
 

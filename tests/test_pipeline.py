@@ -26,7 +26,9 @@ from src.ingestion import (  # noqa: E402
     appliquer_filtres_qualite,
     construire_transactions_territoire,
     reconstruire_mutations,
+    retirer_ventes,
     territoire_prepare,
+    ventes_retirees,
 )
 from src.stats import (  # noqa: E402
     ANNEES_MIN_TENDANCE,
@@ -679,6 +681,68 @@ def ventes_du_depot():
         pytest.skip(f"territoire {TERRITOIRE_LIVRE} non prepare")
     transactions, rapport = construire_transactions_territoire(TERRITOIRE_LIVRE)
     return transactions, rapport
+
+
+# --------------------------------------------------------------------------
+# Ventes retirees a la demande (droit d'opposition)
+# --------------------------------------------------------------------------
+
+
+def test_le_fichier_des_retraits_se_lit_et_refuse_une_ligne_douteuse(tmp_path):
+    chemin = tmp_path / "retraits.csv"
+    chemin.write_text(
+        "# commentaire\n\n2024-03-15;75111;12  Rue OBERKAMPF \n2023-01-02;2A004;1 Cours Napoleon\n",
+        encoding="utf-8",
+    )
+    assert ventes_retirees(str(chemin)) == {
+        ("2024-03-15", "75111", "12 rue oberkampf"),
+        ("2023-01-02", "2A004", "1 cours napoleon"),
+    }
+    assert ventes_retirees(str(tmp_path / "absent.csv")) == set()
+    # Une ligne mal formee arrete la construction : la vente resterait en ligne.
+    for douteuse in ("15/03/2024;75111;12 Rue Oberkampf", "2024-03-15;Paris;12 Rue Oberkampf",
+                     "2024-03-15;75111"):
+        chemin.write_text(douteuse + "\n", encoding="utf-8")
+        with pytest.raises(ValueError):
+            ventes_retirees(str(chemin))
+
+
+def test_une_vente_retiree_disparait_et_elle_seule():
+    mutations = pd.DataFrame({
+        "date_mutation": pd.to_datetime(["2024-03-15", "2024-03-15", "2024-03-16", "2024-03-15"]),
+        "code_commune": ["75111", "75111", "75111", "93048"],
+        "adresse": ["12 Rue Oberkampf", "14 Rue Oberkampf", "12 Rue Oberkampf", "12 Rue Oberkampf"],
+    })
+    reste = retirer_ventes(mutations, {("2024-03-15", "75111", "12 rue oberkampf")})
+    assert len(reste) == 3 and not (
+        (reste["adresse"] == "12 Rue Oberkampf") & (reste["code_commune"] == "75111")
+        & (reste["date_mutation"] == "2024-03-15")
+    ).any()
+    assert retirer_ventes(mutations, set()) is mutations
+
+
+def test_le_site_applique_les_retraits(ventes_du_depot, tmp_path, monkeypatch):
+    transactions, _ = ventes_du_depot
+    adressees = transactions[transactions["adresse"].str.strip() != ""]
+    vente = adressees.iloc[len(adressees) // 2]
+    jour = f"{pd.Timestamp(vente['date_mutation']):%Y-%m-%d}"
+    memes = transactions[
+        (transactions["date_mutation"] == vente["date_mutation"])
+        & (transactions["code_commune"] == vente["code_commune"])
+        & (transactions["adresse"] == vente["adresse"])
+    ]
+    chemin = tmp_path / "retraits.csv"
+    chemin.write_text(f"{jour};{vente['code_commune']};{vente['adresse'].upper()}\n", encoding="utf-8")
+    monkeypatch.setenv("DVF_RETRAITS", str(chemin))
+    apres, _ = construire_transactions_territoire(TERRITOIRE_LIVRE)
+    assert len(apres) == len(transactions) - len(memes)
+    assert not apres["id_mutation"].isin(memes["id_mutation"]).any()
+
+
+def test_le_depot_ne_retire_que_des_ventes_bien_designees():
+    """`data/retraits.csv` se lit : une ligne fautive casserait la construction."""
+
+    ventes_retirees()
 
 
 def test_donnees_du_depot_sont_exploitables(ventes_du_depot):

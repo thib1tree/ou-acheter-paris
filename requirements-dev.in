@@ -1,0 +1,6 @@
+# Développement et intégration continue : l'exécution, plus les tests.
+# Figé, avec empreintes, dans `requirements-dev.txt` (voir `requirements.in`).
+-r requirements.in
+pytest>=7.0,<10
+pyflakes>=3,<4
+playwright>=1.49,<2     # tests/test_navigateur.py

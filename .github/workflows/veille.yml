@@ -36,9 +36,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # Extrait sans jeton : seule l'étape « Version de Python » pousse, avec
+      # JETON_MISE_A_JOUR dans son seul environnement (scripts/git_jeton.sh).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          token: ${{ secrets.JETON_MISE_A_JOUR || github.token }}
+          persist-credentials: false
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
@@ -47,7 +49,8 @@ jobs:
           cache-dependency-path: requirements*.txt
 
       - name: Dépendances
-        run: pip install -r requirements.txt
+        run: |
+          pip install --require-hashes --only-binary :all: -r requirements.txt
 
       - name: Veille
         id: veille
@@ -84,7 +87,7 @@ jobs:
         run: |
           version=$(printf '%s' "$VERSION" | tr -cd '0-9.')
           branche="maintenance/python-$version"
-          if git ls-remote --exit-code --heads origin "$branche" > /dev/null; then
+          if scripts/git_jeton.sh ls-remote --exit-code --heads origin "$branche" > /dev/null; then
             echo "::notice title=Déjà proposé::La branche $branche existe."
             exit 0
           fi
@@ -94,7 +97,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branche"
           git commit -q -am "Python $version pour les workflows"
-          git push -u origin "$branche"
+          scripts/git_jeton.sh push -u origin "$branche"
           gh pr create --base "$BASE" --head "$branche" --title "Python $ancienne → $version" \
             --body "Python $ancienne arrive en fin de vie dans moins d'un an. Cette pull request fait passer les workflows à Python $version, la plus récente des versions parues depuis plus d'un an. Fusionnée automatiquement si la CI est verte."
 

@@ -20,6 +20,7 @@ import re
 import pandas as pd
 
 from src import geo, points
+from src.ingestion import ETAT_ANCIEN, ETAT_NEUF
 from src.stats import (
     ANNEES_MIN_TENDANCE,
     CLE_COMMUNE,
@@ -35,6 +36,7 @@ from src.stats import (
     couleurs_rendement,
     couleurs_sections,
     echelle_et_grisees,
+    etats_des_ventes,
     filtrer,
     formater_euros,
     formater_taux_annuel,
@@ -205,14 +207,23 @@ def types_disponibles(transactions: pd.DataFrame) -> list[str]:
     return sorted(transactions["type_bien"].dropna().unique())
 
 
+def etats_disponibles(transactions: pd.DataFrame) -> list[str]:
+    """« Ancien » puis « Neuf (VEFA) », ceux qui ont des ventes."""
+
+    presents = set(etats_des_ventes(transactions).unique())
+    return [etat for etat in (ETAT_ANCIEN, ETAT_NEUF) if etat in presents]
+
+
 def filtres_par_defaut(transactions: pd.DataFrame) -> Filtres:
-    """Les filtres a l'ouverture : toutes les annees, toutes surfaces, tous types."""
+    """Les filtres a l'ouverture : toutes les annees, toutes surfaces, tous
+    types, le neuf comme l'ancien."""
 
     return Filtres(
         annees=tuple(annees_disponibles(transactions)),
         surface=(0.0, float(plafond_surface(transactions))),
         surface_max_ouvert=True,
         types_bien=types_disponibles(transactions),
+        etats=etats_disponibles(transactions),
     )
 
 
@@ -232,6 +243,7 @@ def filtres_des_ventes(filtres: Filtres) -> dict:
         "an": list(filtres.annees) if filtres.annees else None,
         "su": [float(surface[0]), float(surface[1]), bool(filtres.surface_max_ouvert)],
         "ty": list(filtres.types_bien) if filtres.types_bien else None,
+        "et": list(filtres.etats) if filtres.etats else None,
     }
 
 

@@ -45,6 +45,7 @@ def _filtres_js(filtres: Filtres) -> dict:
         "surface": list(filtres.surface) if filtres.surface else None,
         "ouvert": bool(filtres.surface_max_ouvert),
         "types": list(filtres.types_bien) if filtres.types_bien else None,
+        "etats": list(filtres.etats) if filtres.etats else None,
     }
 
 
@@ -139,6 +140,11 @@ def test_le_navigateur_retrouve_les_chiffres_de_python(transactions, tmp_path):
         # Deux annees : l'evolution annuelle n'est calculable nulle part.
         (Filtres(annees=annees[-2:], surface=(100.0, 120.0), surface_max_ouvert=False,
                  types_bien=["Appartement"]), ["prix_m2_median", "rendement"]),
+        # Le neuf seul (VEFA), puis l'ancien seul.
+        (Filtres(annees=annees, surface=defaut.surface, surface_max_ouvert=True,
+                 types_bien=defaut.types_bien, etats=["Neuf (VEFA)"]), METRIQUES),
+        (Filtres(annees=annees[1:], surface=(20.0, 90.0), surface_max_ouvert=False,
+                 types_bien=["Appartement"], etats=["Ancien"]), ["prix_m2_median", "rendement"]),
     ]
     _comparer(transactions, scenarios, charge.reperes_voies(transactions), tmp_path)
 
@@ -174,6 +180,7 @@ def _synthetique() -> pd.DataFrame:
             "code_section": section,
             "section_courte": section[-2:],
             "type_bien": ["Appartement", "Maison", "Mixte"][i % 3 if i % 5 else 0],
+            "etat": "Neuf (VEFA)" if i % 7 == 0 else "Ancien",
             "adresse": f"{i % 9} rue {['de Paris', 'Gambetta', 'Victor Hugo'][i % 3]}",
             "valeur_fonciere": valeur,
             "surface_bati": surface,
@@ -195,6 +202,9 @@ def test_les_cas_limites_sont_identiques(tmp_path):
                  types_bien=["Appartement", "Mixte"]), METRIQUES),
         (Filtres(annees=(2024,), surface=(48.25, 48.25), surface_max_ouvert=False,
                  types_bien=["Maison"]), METRIQUES),
+        (Filtres(annees=None, surface=None, types_bien=None, etats=["Neuf (VEFA)"]), METRIQUES),
+        (Filtres(annees=(2022, 2023), surface=(30.0, 90.0), surface_max_ouvert=False,
+                 types_bien=["Appartement"], etats=["Ancien"]), METRIQUES),
         # Aucune vente ne passe : cartes vides, legendes lisibles.
         (Filtres(annees=(2021,), surface=(5000.0, 6000.0), surface_max_ouvert=False,
                  types_bien=None), METRIQUES),

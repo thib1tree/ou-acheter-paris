@@ -19,6 +19,12 @@ et la referme de lui-même quand tout est rentré dans l'ordre. Sont vérifiés 
 - les workflows : GitHub coupe ceux qui sont programmés après 60 jours sans
   activité dans un dépôt public. La veille les réactive (et, ce faisant,
   repousse l'échéance) ;
+- MapLibre GL JS, copié dans `site/carte/vendor/` hors de portée de
+  Dependabot : une faille connue de cette version (base OSV) est un
+  problème ; une version plus récente, une simple information ;
+- la taille du dépôt : chaque millésime de données y ajoute quelques dizaines
+  de mégaoctets. Au-delà de `TAILLE_DEPOT_MAX`, il est temps de sortir les
+  données de l'historique (Git LFS, ou fichiers attachés aux releases) ;
 - la version de Python des workflows (`.python-version`) : un an avant sa fin
   de vie, la sortie `python` propose la plus récente des versions parues
   depuis plus d'un an. Le workflow en fait une pull request, que la fusion
@@ -55,6 +61,11 @@ PREAVIS_JETON = dt.timedelta(days=30)
 PREAVIS_PYTHON = dt.timedelta(days=365)
 RECUL_PYTHON = dt.timedelta(days=365)
 URL_CYCLES_PYTHON = "https://peps.python.org/api/release-cycle.json"
+URL_OSV = "https://api.osv.dev/v1/query"
+URL_MAPLIBRE = "https://registry.npmjs.org/maplibre-gl/latest"
+PROVENANCE_MAPLIBRE = RACINE / "site" / "carte" / "vendor" / "PROVENANCE.txt"
+#: GitHub recommande de rester sous le gigaoctet ; on prévient avant.
+TAILLE_DEPOT_MAX = 750 * 1024 * 1024
 #: Une tuile de Paris (zoom 12), servie par tous les fonds.
 TUILE_TEST = {"z": 12, "x": 2074, "y": 1409}
 ENTETES = {"User-Agent": "ou-acheter-paris-veille/1.0 (+https://github.com/thib1tree/ou-acheter-paris)"}
@@ -95,6 +106,17 @@ def _lire(adresse: str, essais: int = 2) -> tuple[int, dict[str, str], bytes]:
                 raise erreur
             time.sleep(30)
     raise AssertionError("inatteignable")
+
+
+def _json(adresse: str, donnees: dict | None = None):
+    """GET, ou POST de `donnees` en JSON ; rend le corps de la réponse décodé."""
+
+    corps = json.dumps(donnees).encode() if donnees is not None else None
+    requete = urllib.request.Request(adresse, data=corps, headers={
+        **ENTETES, **({"Content-Type": "application/json"} if corps else {}),
+    })
+    with urllib.request.urlopen(requete, timeout=30) as reponse:
+        return json.loads(reponse.read() or b"{}")
 
 
 # --------------------------------------------------------------------------
@@ -262,6 +284,59 @@ def python_cible(cycles: dict[str, dict], actuelle: str, aujourd_hui: dt.date) -
     return cible if cible and cle(cible) > cle(actuelle) else None
 
 
+def version_maplibre(provenance: Path = PROVENANCE_MAPLIBRE) -> str:
+    """La version copiée dans le dépôt, lue dans `PROVENANCE.txt`."""
+
+    premiere = provenance.read_text(encoding="utf-8").splitlines()[0]
+    return premiere.split("MapLibre GL JS", 1)[1].split()[0]
+
+
+def verifier_maplibre(rapport: Rapport, lire=_json, version: str | None = None) -> None:
+    """Failles connues de la version copiée (OSV), et version la plus récente."""
+
+    version = version or version_maplibre()
+    try:
+        reponse = lire(URL_OSV, {"package": {"name": "maplibre-gl", "ecosystem": "npm"},
+                                 "version": version})
+    except Exception as erreur:  # noqa: BLE001 - la veille suivante reessaiera
+        rapport.ok(f"MapLibre GL JS {version} (base de failles OSV injoignable : {erreur}).")
+        return
+    failles = [f.get("id", "?") for f in (reponse or {}).get("vulns") or []]
+    if failles:
+        rapport.probleme(
+            f"MapLibre GL JS {version}, copié dans `site/carte/vendor/`, a des failles connues "
+            f"({', '.join(failles[:5])}) : le remplacer par une version corrigée "
+            "(voir `PROVENANCE.txt`), tests à l'appui."
+        )
+        return
+    try:
+        recente = lire(URL_MAPLIBRE).get("version", "")
+    except Exception:  # noqa: BLE001
+        recente = ""
+    if recente and recente != version:
+        rapport.ok(f"MapLibre GL JS {version} : aucune faille connue (version {recente} parue).")
+    else:
+        rapport.ok(f"MapLibre GL JS {version} : aucune faille connue.")
+
+
+def verifier_taille_depot(rapport: Rapport, api: Api) -> None:
+    """La taille du dépôt (champ `size` de l'API, en kio)."""
+
+    try:
+        taille = int(api.get(api.chemin()).get("size") or 0) * 1024
+    except (ErreurApi, ValueError, AttributeError) as erreur:
+        rapport.ok(f"Taille du dépôt inconnue ({erreur}).")
+        return
+    lisible = f"{taille / 2**20:.0f} Mio"
+    if taille > TAILLE_DEPOT_MAX:
+        rapport.probleme(
+            f"Le dépôt pèse {lisible} : chaque millésime y ajoute ses données. Il est temps "
+            "de les sortir de l'historique (Git LFS, ou fichiers attachés aux releases)."
+        )
+    else:
+        rapport.ok(f"Dépôt de {lisible}.")
+
+
 def verifier_python(rapport: Rapport, aujourd_hui: dt.date) -> str | None:
     actuelle = (RACINE / ".python-version").read_text(encoding="utf-8").strip()
     try:
@@ -294,6 +369,8 @@ def main(arguments: list[str] | None = None) -> int:
     verifier_pull_requests(rapport, api, maintenant)
     verifier_ci(rapport, api)
     reactiver_workflows(rapport, api)
+    verifier_maplibre(rapport)
+    verifier_taille_depot(rapport, api)
     cible = verifier_python(rapport, aujourd_hui)
 
     print(rapport.markdown(aujourd_hui))

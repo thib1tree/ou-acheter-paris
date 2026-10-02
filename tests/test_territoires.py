@@ -899,6 +899,8 @@ def test_les_filtres_partent_en_regles_et_non_en_ventes_retenues():
         "an": [2023, 2024],
         "su": [0.0, 120.0, True],
         "ty": ["Appartement"],
+        # Aucun filtre neuf / ancien pose : tout passe (`None`, pas `[]`).
+        "et": None,
     }
     assert charge["ty"] == ["Appartement"]
 

@@ -22,13 +22,19 @@ but non lucratif de données publiques.
 | Périmètre : 425 communes | [Unité urbaine de Paris](https://www.insee.fr/fr/metadonnees/geographie/unite-urbaine-2020/00851-paris) (INSEE) | Licence Ouverte 2.0 |
 | Contours des quartiers | [Cadastre](https://cadastre.data.gouv.fr/) (Etalab) | Licence Ouverte 2.0 |
 | Gares et projets | [Île-de-France Mobilités](https://data.iledefrance-mobilites.fr/) | Licence Ouverte 2.0 |
-| Fonds de carte | Esri, OpenStreetMap, IGN | Conditions de chaque fournisseur |
+| Fonds de carte | Esri (par défaut), OpenStreetMap, IGN | Conditions de chaque fournisseur |
 
 Seules les ventes d'appartements et de maisons sont retenues. Sont écartées celles qui
 ne reflètent pas un prix de marché : ventes mêlant logement et local commercial, ventes
 de 3 logements ou plus, prix symboliques ou invraisemblables. Une zone de moins de
 5 ventes reste grise. Les données et les gares sont vérifiées chaque mois et mises à
 jour automatiquement.
+
+À savoir pour lire les prix : le neuf vendu sur plan (VEFA), plus cher, se sépare de
+l'ancien par un filtre ; le prix d'une maison comprend son terrain, mais son prix au m²
+ne rapporte qu'à la surface habitable ; une vente n'apparaît dans les DVF que plusieurs
+mois après sa signature. Les gares à venir distinguent celles en travaux de celles
+encore en projet.
 
 ## Comment ça marche
 
@@ -107,7 +113,7 @@ le dit alors par une issue (donc un courriel au propriétaire du dépôt).
 | le 10 du mois | gares ouvertes ou annoncées ? même chemin | `reseau.yml` |
 | chaque mois | nouvelles versions des actions et des dépendances Python | Dependabot |
 | après chaque CI, et chaque jour | fusion des pull requests automatiques vertes, une à la fois | `fusion-auto.yml` |
-| chaque lundi | veille : site en ligne, fraîcheur des données, fonds de carte, jeton, pull requests en attente, CI de `main`, workflows réactivés, fin de vie de Python | `veille.yml` |
+| chaque lundi | veille : site en ligne, fraîcheur des données, fonds de carte, jeton, pull requests en attente, CI de `main`, workflows réactivés, failles de MapLibre, taille du dépôt, fin de vie de Python | `veille.yml` |
 
 Garde-fous, du premier au dernier rempart :
 

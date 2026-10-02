@@ -24,6 +24,7 @@ SOFTWARE.
 
 Le code du dépôt est sous licence MIT (ci-dessus). Les données de `data/`
 restent sous la licence de leur source (voir le README) : DVF géolocalisées
-(DGFiP, Etalab), cadastre (Etalab) et INSEE sous Licence Ouverte 2.0 ; gares
-d'Île-de-France Mobilités sous les conditions de son portail. MapLibre GL JS
+(DGFiP, Etalab), cadastre (Etalab), INSEE, et gares et projets
+d'Île-de-France Mobilités (jeux « emplacement-des-gares-idf » et
+« projets_arrets_idf »), tous sous Licence Ouverte 2.0. MapLibre GL JS
 (`site/carte/vendor/`) est sous licence BSD à trois clauses.

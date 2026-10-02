@@ -46,11 +46,22 @@ TYPE_MIXTE = "Mixte"
 #: Libelle DVF des locaux d'activite (detecte de maniere tolerante).
 MOTIF_LOCAL_ACTIVITE = re.compile(r"local\s+industriel", re.IGNORECASE)
 
+#: Nature des ventes sur plan : du neuf, vendu avant achevement.
+NATURE_VEFA = "Vente en l'état futur d'achèvement"
+
+#: Etat du bien, tel que le filtre « Neuf ou ancien » le propose. Les DVF ne
+#: disent le neuf que pour les ventes sur plan (VEFA) : un logement neuf vendu
+#: une fois acheve est une « Vente » comme une autre, et compte ici comme
+#: ancien. Le neuf se paie plus cher (TVA, frais de notaire reduits, normes
+#: recentes) : le melanger a l'ancien gonfle les prix la ou l'on construit.
+ETAT_ANCIEN = "Ancien"
+ETAT_NEUF = "Neuf (VEFA)"
+
 #: Natures de mutation conservees par defaut (les echanges, adjudications et
 #: expropriations ne refletent pas un prix de marche).
 NATURES_MUTATION_DEFAUT: tuple[str, ...] = (
     "Vente",
-    "Vente en l'état futur d'achèvement",
+    NATURE_VEFA,
 )
 
 #: Marqueurs de valeur manquante rencontres dans les exports DVF.
@@ -531,6 +542,10 @@ def appliquer_filtres_qualite(
 
     df = df[garde]
     df["prix_m2"] = prix_m2[garde].round(0)
+    df["etat"] = (
+        np.where(df["nature_mutation"] == NATURE_VEFA, ETAT_NEUF, ETAT_ANCIEN)
+        if "nature_mutation" in df.columns else ETAT_ANCIEN
+    )
 
     rapport.rejets = rejets
     rapport.mutations_finales = len(df)
@@ -714,6 +729,7 @@ COLONNES_EXPLOITEES: tuple[str, ...] = (
     "code_section",
     "section_courte",
     "type_bien",
+    "etat",
     "adresse",
     "valeur_fonciere",
     "surface_bati",

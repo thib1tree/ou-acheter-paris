@@ -2,8 +2,11 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8" />
-<!-- `user-scalable=no` : le pincement doit zoomer la *carte*, pas la page. -->
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<!-- Pas de `user-scalable=no` : qui voit mal doit pouvoir agrandir le texte
+     (WCAG 1.4.4). Le pincement sur la carte reste a la carte : son conteneur
+     porte `touch-action: none` (`carte/carte.css`), et ce qui la recouvre
+     laisse passer les doigts (`pointer-events: none`). -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>{{nom_site}}</title>
 <meta name="description" content="Où acheter autour de Paris ? Carte gratuite des prix de vente réels des logements, quartier par quartier et vente par vente, avec les gares actuelles et à venir. Données publiques DVF des cinq dernières années." />
 <meta name="theme-color" content="#bd0026" />
@@ -69,6 +72,13 @@
     <div class="cases"></div>
   </fieldset>
 
+  <fieldset id="filtre-etats">
+    <legend>Neuf ou ancien</legend>
+    <div class="cases"></div>
+    <p class="aide">Le neuf, ce sont les ventes sur plan (VEFA), plus chères :
+    un logement neuf vendu une fois achevé compte comme ancien.</p>
+  </fieldset>
+
   <p id="etat-calcul" class="aide" hidden></p>
 
   <details id="a-propos">
@@ -84,7 +94,9 @@
     <p><b>Le jeu de données.</b> Chaque vente immobilière enregistrée par les
     services de publicité foncière : date, prix, nature et surface des biens,
     adresse, parcelle cadastrale et position sur la carte. Il est republié deux
-    fois par an ; la carte couvre les ventes du {{debut}} au {{fin}}.</p>
+    fois par an ; la carte couvre les ventes du {{debut}} au {{fin}}. Une vente
+    n'y paraît que plusieurs mois après sa signature : les plus récentes
+    manquent encore, et les derniers mois publiés peuvent être incomplets.</p>
 
     <p><b>Ce qui est retenu.</b></p>
     <ul>
@@ -93,6 +105,10 @@
       ni expropriations ;</li>
       <li>les appartements et les maisons. Une vente de plusieurs lots compte une
       fois : caves et parkings sont dans le prix, pas dans la surface ;</li>
+      <li>le prix d'une maison comprend son terrain, mais son prix au m² ne
+      rapporte qu'à la surface habitable : un grand jardin le fait monter ;</li>
+      <li>le neuf vendu sur plan (VEFA) est plus cher que l'ancien : le filtre
+      « Neuf ou ancien » permet de les séparer ;</li>
       <li>sont écartées les ventes qui comprennent un local commercial, celles de
       {{seuil_bloc}} logements ou plus (ventes en bloc), et les prix
       invraisemblables : moins de {{valeur_min}} €, moins de {{prix_min}} ou plus

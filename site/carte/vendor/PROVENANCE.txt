@@ -1,9 +1,19 @@
-MapLibre GL JS 4.7.1 — https://github.com/maplibre/maplibre-gl-js
-Licence 3-Clause BSD (texte complet en tete de maplibre-gl.js).
+MapLibre GL JS 6.11.2 — https://github.com/maplibre/maplibre-gl-js
+Licence 3-Clause BSD (texte complet en tete de chaque fichier .mjs).
 
-Fichiers repris tels quels depuis le paquet npm `maplibre-gl@4.7.1`
-(`dist/maplibre-gl.js` et `dist/maplibre-gl.css`).
+Fichiers repris tels quels depuis le paquet npm `maplibre-gl@6.11.2`
+(`dist/maplibre-gl.mjs`, `dist/maplibre-gl-shared.mjs`,
+`dist/maplibre-gl-worker.mjs` et `dist/maplibre-gl.css`), dont l'empreinte
+sha512 a ete verifiee contre celle publiee par le registre npm.
+
+Depuis la version 6, MapLibre n'est distribue qu'en modules JavaScript :
+`../maplibre.mjs` l'importe et l'expose a `carte.js` (`window.maplibregl`).
+Le worker est trouve a cote du module principal (`maplibre-gl-worker.mjs`).
 
 Versionnes plutot que charges depuis un CDN : l'application doit demarrer sur
 un poste sans acces reseau autre que les tuiles du fond de carte, et un CDN
 indisponible rendrait la carte entierement blanche.
+
+Pour changer de version : remplacer ces quatre fichiers par ceux du nouveau
+paquet, mettre a jour la premiere ligne de ce fichier (la veille y lit la
+version), et lancer tous les tests, navigateur compris.

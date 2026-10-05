@@ -179,9 +179,12 @@
   </a>
 </footer>
 
-<script src="hote.js"></script>
-<script src="carte/vendor/maplibre-gl.js"></script>
-<script src="carte/carte.js"></script>
-<script src="app.js"></script>
+<!-- MapLibre n'existe plus qu'en module (`carte/maplibre.mjs`). Un module et
+     des scripts `defer` s'executent dans l'ordre de la page, une fois celle-ci
+     lue : MapLibre est donc pret avant `carte.js`, et `carte.js` avant `app.js`. -->
+<script defer src="hote.js"></script>
+<script type="module" src="carte/maplibre.mjs"></script>
+<script defer src="carte/carte.js"></script>
+<script defer src="app.js"></script>
 </body>
 </html>

@@ -984,7 +984,7 @@ def test_les_constantes_du_champ_de_distance_sont_celles_de_maplibre():
 
     nuanceur = (
         Path(__file__).resolve().parents[1]
-        / "site" / "carte" / "vendor" / "maplibre-gl.js"
+        / "site" / "carte" / "vendor" / "maplibre-gl.mjs"
     ).read_text(encoding="utf-8", errors="ignore")
     assert "#define SDF_PX 8.0" in nuanceur
     assert "inner_edge=(256.0-64.0)/256.0" in nuanceur

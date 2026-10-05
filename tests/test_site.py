@@ -99,9 +99,27 @@ def test_l_ouverture_est_calculee_par_python_aux_filtres_par_defaut(site):
     assert sections["legende"]["titre"] == "Prix médian au m²"
 
 
+def test_maplibre_est_pret_avant_la_carte(site):
+    """MapLibre n'est plus qu'un module : il ne s'execute qu'une fois la page
+    lue. Les scripts qui s'en servent doivent donc etre `defer`, apres lui —
+    module et `defer` s'executent alors dans l'ordre de la page."""
+
+    sortie, _ = site
+    page = (sortie / "index.html").read_text(encoding="utf-8")
+    scripts = re.findall(r'<script\b([^>]*)\bsrc="([^"]+)"', page)
+    ordre = [src for _, src in scripts]
+    assert ordre.index("carte/maplibre.mjs") < ordre.index("carte/carte.js") < ordre.index("app.js")
+    for attributs, src in scripts:
+        assert ('type="module"' in attributs) if src.endswith(".mjs") else ("defer" in attributs), src
+    module = (sortie / "carte" / "maplibre.mjs").read_text(encoding="utf-8")
+    assert 'from "./vendor/maplibre-gl.mjs"' in module and "window.maplibregl" in module
+
+
 def test_la_page_et_la_carte_sont_copiees(site):
     sortie, _ = site
-    for chemin in ("calcul.js", "calcul-worker.js", "carte/carte.js", "carte/vendor/maplibre-gl.js"):
+    for chemin in ("calcul.js", "calcul-worker.js", "carte/carte.js", "carte/maplibre.mjs",
+                   "carte/vendor/maplibre-gl.mjs", "carte/vendor/maplibre-gl-shared.mjs",
+                   "carte/vendor/maplibre-gl-worker.mjs", "carte/vendor/maplibre-gl.css"):
         assert (sortie / chemin).is_file(), chemin
 
 

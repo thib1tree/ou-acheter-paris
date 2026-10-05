@@ -530,7 +530,7 @@ def test_une_version_plus_recente_de_maplibre_n_est_qu_une_information():
 def test_la_version_de_maplibre_se_lit_dans_sa_provenance():
     version = veiller.version_maplibre()
     assert version.count(".") == 2
-    entete = (RACINE / "site" / "carte" / "vendor" / "maplibre-gl.js").read_text(encoding="utf-8")[:300]
+    entete = (RACINE / "site" / "carte" / "vendor" / "maplibre-gl.mjs").read_text(encoding="utf-8")[:300]
     assert f"v{version}" in entete
 
 

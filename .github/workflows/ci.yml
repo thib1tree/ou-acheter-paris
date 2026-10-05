@@ -80,7 +80,7 @@ jobs:
           "$RUNNER_TEMP/actionlint" -color
 
       - name: Syntaxe du JavaScript (carte et site)
-        run: for f in site/*.js site/carte/carte.js; do node --check "$f"; done
+        run: for f in site/*.js site/carte/carte.js site/carte/maplibre.mjs; do node --check "$f"; done
 
       - name: Construction du site statique (et limites de Cloudflare Pages)
         env:

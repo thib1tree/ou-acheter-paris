@@ -84,7 +84,7 @@ def ventes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Des lignes DVF brutes aux ventes exploitables, par le chemin de production.
 
     C'est exactement l'enchainement de `scripts/preparer_territoire.py` :
-    lecture d'un fichier departemental geo-dvf, reconstruction des mutations,
+    lecture d'un fichier annuel d'Etalab, reconstruction des mutations,
     puis filtres de qualite. Les tests ci-dessous decrivent donc des pieges
     reellement traverses par les donnees, pas un chemin de test parallele.
     """
@@ -93,14 +93,14 @@ def ventes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(telechargement, "repertoire_cache_dvf", lambda: str(tmp_path))
 
     def executer(lignes: list[str], options: OptionsNettoyage | None = None, separateur: str = ";"):
-        chemin = telechargement.chemin_departement("78", 2025)
+        chemin = telechargement.chemin_periode("2025")
         contenu = "\n".join([ENTETE, *lignes]) + "\n"
         if separateur != ";":
             contenu = contenu.replace(";", separateur)
         with gzip.open(chemin, "wt", encoding="utf-8", newline="") as flux:
             flux.write(contenu)
 
-        brut = telechargement.lignes_departement("78", 2025)
+        brut = telechargement.lignes_periode("2025")
         options = options or OptionsNettoyage()
         rapport = RapportQualite()
         rapport.fichiers = [Path(chemin).name]

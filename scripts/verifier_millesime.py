@@ -12,7 +12,7 @@ adopte, pas celui du moment, pour qu'une publication survenue entre-temps
 soit vue au passage suivant.
 
 Dans GitHub Actions, les sorties `nouveau` (`oui`/`non`), `annees`
-(`2021-2025`), `millesime` et `raisons` sont ecrites dans `$GITHUB_OUTPUT`.
+(`2021-2026`), `millesime` et `raisons` sont ecrites dans `$GITHUB_OUTPUT`.
 """
 
 from __future__ import annotations
@@ -61,11 +61,7 @@ def main(arguments: list[str] | None = None) -> int:
         print(f"{source} : millesime {etat.millesime}, annees {etat.annees[0]}-{etat.annees[-1]}")
         return 0
 
-    departements = [
-        d for d in territoires.territoire(options.territoire).departements
-        if d not in territoires.DEPARTEMENTS_SANS_DVF
-    ]
-    etat = millesime.interroger(departements)
+    etat = millesime.interroger()
     ancienne = json.loads(source.read_text(encoding="utf-8")) if source.exists() else None
     raisons = millesime.differences(etat, ancienne)
 

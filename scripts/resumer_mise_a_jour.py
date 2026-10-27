@@ -10,8 +10,8 @@ nouveau, tous deux passés par les mêmes règles de nettoyage que le site, et
 
 - la période couverte, avant et après ;
 - le nombre de ventes exploitables par année ;
-- le prix médian au m² par département, sur toute la fenêtre et à années
-  égales (pour distinguer une révision des données d'un simple glissement
+- le prix médian au m² par département, sur toute la fenêtre et à période
+  égale (pour distinguer une révision des données d'un simple glissement
   de fenêtre) ;
 - les communes apparues ou disparues, et les sections sans contour, dont les
   ventes comptent mais qui ne sont pas dessinées ;
@@ -75,13 +75,34 @@ def _departement(ventes: pd.DataFrame) -> pd.Series:
     return ventes["code_commune"].astype(str).map(geo.departement_de)
 
 
-#: Garde-fous. Chaque mise à jour fait glisser la fenêtre : une année complète
-#: sort, une année (parfois partielle) entre. Le nombre de ventes varie donc
-#: d'une vingtaine de pour cent, et les prix sur toute la fenêtre aussi. À
-#: années égales, en revanche, Etalab ne fait que de petites révisions.
+def periode_egale(
+    anciennes: pd.DataFrame, nouvelles: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Les ventes des deux côtés, réduites aux dates couvertes des deux côtés.
+
+    La fenêtre glisse d'un semestre ou d'une année : une année peut n'être
+    plus couverte que pour un semestre (2021 après la livraison d'octobre
+    2026), et l'année en cours s'allonger. Comparer des années entières
+    prendrait ce glissement pour une révision.
+    """
+
+    dates_a = pd.to_datetime(anciennes["date_mutation"], errors="coerce")
+    dates_b = pd.to_datetime(nouvelles["date_mutation"], errors="coerce")
+    if dates_a.dropna().empty or dates_b.dropna().empty:
+        return anciennes.iloc[0:0], nouvelles.iloc[0:0]
+    debut = max(dates_a.min(), dates_b.min())
+    fin = min(dates_a.max(), dates_b.max())
+    return (anciennes[dates_a.between(debut, fin)], nouvelles[dates_b.between(debut, fin)])
+
+
+#: Garde-fous. Chaque mise à jour fait glisser la fenêtre d'un semestre : la
+#: plus ancienne année perd un semestre (ou sort), l'année en cours en gagne
+#: un. Le nombre de ventes varie donc d'une dizaine de pour cent, et les prix
+#: sur toute la fenêtre aussi. À période égale, en revanche, Etalab ne fait
+#: que de petites révisions.
 BAISSE_VENTES_MAX = 0.30  # ventes exploitables, sur toute la fenêtre
-BAISSE_ANNEE_MAX = 0.10  # ventes d'une même année, avant et après
-ECART_PRIX_EGAL_MAX = 0.05  # prix médian d'un département, à années égales
+BAISSE_ANNEE_MAX = 0.10  # ventes d'une même année, avant et après, à période égale
+ECART_PRIX_EGAL_MAX = 0.05  # prix médian d'un département, à période égale
 COMMUNES_DISPARUES_MAX = 3  # une fusion de communes en fait disparaître une ou deux
 PART_SANS_CONTOUR_MAX = 0.005  # ventes comptées mais non dessinées
 
@@ -95,20 +116,19 @@ def garde_fous(
     if len(nouvelles) < (1 - BAISSE_VENTES_MAX) * len(anciennes):
         alertes.append(f"ventes exploitables {_ecart(len(anciennes), len(nouvelles))}")
 
-    egales = sorted(set(anciennes["annee"].dropna()) & set(nouvelles["annee"].dropna()))
-    avant = anciennes["annee"].value_counts()
-    apres = nouvelles["annee"].value_counts()
-    for annee in egales:
-        if apres.get(annee, 0) < (1 - BAISSE_ANNEE_MAX) * avant.get(annee, 0):
-            alertes.append(f"ventes de {int(annee)} {_ecart(avant[annee], apres.get(annee, 0))}")
+    egal_a, egal_b = periode_egale(anciennes, nouvelles)
+    avant = egal_a["annee"].value_counts()
+    apres = egal_b["annee"].value_counts()
+    for annee in sorted(avant.index):
+        if apres.get(annee, 0) < (1 - BAISSE_ANNEE_MAX) * avant[annee]:
+            alertes.append(f"ventes de {int(annee)} à période égale "
+                           f"{_ecart(avant[annee], apres.get(annee, 0))}")
 
-    egal_a = anciennes[anciennes["annee"].isin(egales)]
-    egal_b = nouvelles[nouvelles["annee"].isin(egales)]
     med_a = egal_a.groupby(_departement(egal_a))["prix_m2"].median()
     med_b = egal_b.groupby(_departement(egal_b))["prix_m2"].median()
     for dep in sorted(set(med_a.index) & set(med_b.index)):
         if med_a[dep] and abs(med_b[dep] / med_a[dep] - 1) > ECART_PRIX_EGAL_MAX:
-            alertes.append(f"prix médian du {dep} à années égales {_ecart(med_a[dep], med_b[dep])}")
+            alertes.append(f"prix médian du {dep} à période égale {_ecart(med_a[dep], med_b[dep])}")
 
     disparues = set(anciennes["code_commune"].dropna()) - set(nouvelles["code_commune"].dropna())
     if len(disparues) > COMMUNES_DISPARUES_MAX:
@@ -147,22 +167,20 @@ def resumer(
         lignes.append(f"| {int(annee)} | {_entier(a) if a else '—'} | {_entier(b) if b else '—'} "
                       f"| {_ecart(a, b) if a and b else ('nouvelle' if b else 'retirée')} |")
 
-    communes = sorted(set(anciennes["annee"].dropna().astype(int)) & set(nouvelles["annee"].dropna().astype(int)))
+    egal_a, egal_b = periode_egale(anciennes, nouvelles)
     lignes += [
         "",
         "### Prix médian au m² par département",
         "",
-        f"« À années égales » compare les seules années présentes des deux côtés "
-        f"({', '.join(map(str, communes)) or 'aucune'}) : un écart y signale une révision "
-        "des données par Etalab, et non le glissement de la fenêtre.",
+        f"« À période égale » compare les seules ventes couvertes des deux côtés "
+        f"({_periode(egal_b) if len(egal_b) else 'aucune'}) : un écart y signale une "
+        "révision des données par Etalab, et non le glissement de la fenêtre.",
         "",
-        "| Département | Avant | Après | Écart | À années égales |",
+        "| Département | Avant | Après | Écart | À période égale |",
         "|---|---:|---:|---:|---:|",
     ]
     med_avant = anciennes.groupby(_departement(anciennes))["prix_m2"].median()
     med_apres = nouvelles.groupby(_departement(nouvelles))["prix_m2"].median()
-    egal_a = anciennes[anciennes["annee"].isin(communes)]
-    egal_b = nouvelles[nouvelles["annee"].isin(communes)]
     med_egal_a = egal_a.groupby(_departement(egal_a))["prix_m2"].median()
     med_egal_b = egal_b.groupby(_departement(egal_b))["prix_m2"].median()
     for dep in sorted(set(med_avant.index) | set(med_apres.index)):

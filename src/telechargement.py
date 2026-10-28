@@ -1,30 +1,32 @@
-"""Recuperation des DVF geolocalisees, departement par departement.
+"""Recuperation des DVF geolocalisees, fichier annuel par fichier annuel.
 
 Etalab republie les DVF de la DGFiP **geolocalisees et deja mises en forme**,
-decoupees par annee et par departement :
+en un fichier par annee pour la France entiere (voir `src/millesime.py`) :
 
-    https://files.data.gouv.fr/geo-dvf/latest/csv/{annee}/departements/{dep}.csv.gz
+    https://static.data.gouv.fr/resources/demandes-de-valeurs-foncieres-geolocalisees/<horodatage>/full-2025.csv.gz
 
 C'est la source qui evite les deux impasses des autres :
 
 * l'export section par section de `app.dvf.etalab.gouv.fr` demande un clic par
   section cadastrale — inexploitable au-dela d'une poignee de communes ;
 * le fichier annuel brut de la DGFiP (`ValeursFoncieres-{annee}.txt`, ~500 Mo)
-  couvre toute la France d'un bloc, mais **sans coordonnees ni identifiant de
+  couvre lui aussi toute la France, mais **sans coordonnees ni identifiant de
   mutation** : il faudrait geocoder soi-meme et deviner le regroupement des
   lignes en ventes. Le millesime geolocalise fait deja ce travail, et il est
   dans le schema exact que `src/ingestion.py` sait lire.
 
-Un departement-annee pese 0,4 a 2,3 Mo compresse : couvrir le Grand Paris sur
-six millesimes represente une cinquantaine de Mo, contre 3,5 Go pour le
-national.
+Un fichier annuel pese 100 a 150 Mo compresse ; il est telecharge une fois,
+verifie par son empreinte SHA-1, puis lu par blocs en ne gardant que les
+communes du territoire. (Jusqu'en avril 2026, Etalab decoupait aussi chaque
+annee par departement ; cette arborescence est archivee.)
 """
 
 from __future__ import annotations
 
 import gzip
+import hashlib
 import os
-import shutil
+import time
 from typing import Iterable, Iterator
 
 import pandas as pd
@@ -33,11 +35,6 @@ try:  # pragma: no cover - dependance optionnelle, comme dans src/geo.py
     import requests
 except ImportError:  # pragma: no cover
     requests = None  # type: ignore[assignment]
-
-#: Fichiers annuels par departement, millesime courant.
-URL_DVF_DEPARTEMENT = (
-    "https://files.data.gouv.fr/geo-dvf/latest/csv/{annee}/departements/{departement}.csv.gz"
-)
 
 #: Table d'appartenance geographique de l'INSEE, qui porte le rattachement de
 #: chaque commune a son unite urbaine. C'est la seule source de la liste des
@@ -49,13 +46,16 @@ URL_UNITES_URBAINES = "https://www.insee.fr/fr/statistiques/fichier/2028028/tabl
 #: Code INSEE de l'unite urbaine de Paris (millesime 2020).
 CODE_UU_PARIS = "00851"
 
-DELAI_RESEAU = 120  # secondes : un departement-annee peut peser quelques Mo.
+DELAI_RESEAU = 120  # secondes, entre deux paquets recus.
 
-ENTETES_HTTP = {"User-Agent": "cartographie-dvf/1.0 (+https://files.data.gouv.fr/geo-dvf/)"}
+#: Tentatives par fichier : une connexion coupee en cours de route reprend.
+ESSAIS = 5
 
-#: Lecture par blocs : un departement dense sur une annee tient largement en
-#: memoire, mais huit departements sur six millesimes, non. On filtre au fil de
-#: l'eau plutot que de tout charger puis reduire.
+ENTETES_HTTP = {"User-Agent": "cartographie-dvf/1.0 (mise a jour des donnees)"}
+
+#: Lecture par blocs : un fichier annuel compte quelque 4 millions de lignes,
+#: dont une sur dix pour le Grand Paris. On filtre au fil de l'eau plutot que
+#: de tout charger puis reduire.
 TAILLE_BLOC = 200_000
 
 #: Colonnes effectivement utilisees par le pipeline. Les DVF geolocalisees en
@@ -105,43 +105,83 @@ def repertoire_cache_dvf() -> str:
     return chemin
 
 
-def chemin_departement(departement: str, annee: int) -> str:
-    return os.path.join(repertoire_cache_dvf(), f"{annee}-{departement}.csv.gz")
+def chemin_periode(periode: str) -> str:
+    """Fichier en cache d'une periode (`2025`, `2026-s1`)."""
+
+    return os.path.join(repertoire_cache_dvf(), f"full-{periode}.csv.gz")
 
 
-def telecharger_departement(
-    departement: str, annee: int, forcer: bool = False
-) -> str:
-    """Telecharge un departement-annee et renvoie le chemin du fichier en cache.
+def _sha1(chemin: str) -> str:
+    empreinte = hashlib.sha1()
+    with open(chemin, "rb") as flux:
+        for paquet in iter(lambda: flux.read(1 << 20), b""):
+            empreinte.update(paquet)
+    return empreinte.hexdigest()
 
-    Le fichier est ecrit en flux : rien ne transite par la memoire, et un
-    telechargement interrompu ne laisse pas de fichier tronque en cache (ecriture
-    dans un `.partiel` renomme seulement une fois complet).
+
+def _recevoir(url: str, partiel: str) -> None:
+    """Complete `partiel` depuis `url`, en reprenant ou il s'est arrete."""
+
+    deja = os.path.getsize(partiel) if os.path.exists(partiel) else 0
+    entetes = {**ENTETES_HTTP, **({"Range": f"bytes={deja}-"} if deja else {})}
+    with requests.get(url, timeout=DELAI_RESEAU, headers=entetes, stream=True) as reponse:
+        reponse.raise_for_status()
+        # Un serveur qui ignore la reprise renvoie tout le fichier : on repart de zero.
+        mode = "ab" if deja and reponse.status_code == 206 else "wb"
+        with open(partiel, mode) as flux:
+            for paquet in reponse.iter_content(chunk_size=1 << 20):
+                flux.write(paquet)
+
+
+def telecharger_periode(periode: str, fichier: dict, forcer: bool = False) -> str:
+    """Telecharge le fichier d'une periode et renvoie son chemin en cache.
+
+    `fichier` est l'entree de `millesime.EtatDistant.fichiers` : adresse,
+    taille, empreinte SHA-1. Un fichier deja en cache qui n'a plus l'empreinte
+    publiee (Etalab l'a republie) est retelecharge.
+
+    Le fichier est ecrit en flux : rien ne transite par la memoire. Une
+    connexion coupee reprend la ou elle s'est arretee (`ESSAIS` fois au
+    plus), et un telechargement interrompu ou altere ne laisse pas de fichier
+    en cache (ecriture dans un `.partiel` renomme seulement une fois complet
+    et verifie).
     """
 
-    destination = chemin_departement(departement, annee)
-    if os.path.exists(destination) and not forcer:
+    destination = chemin_periode(periode)
+    attendue = fichier.get("sha1")
+    if os.path.exists(destination) and not forcer and (not attendue or _sha1(destination) == attendue):
         return destination
     if requests is None:
         raise TelechargementImpossible(
             "Module `requests` absent : impossible de telecharger les DVF."
         )
 
-    url = URL_DVF_DEPARTEMENT.format(annee=annee, departement=departement)
+    url = fichier.get("url")
+    if not url:
+        raise TelechargementImpossible(f"{periode} : aucune adresse de fichier")
     partiel = destination + ".partiel"
+    if os.path.exists(partiel):
+        os.remove(partiel)
     try:
-        with requests.get(
-            url, timeout=DELAI_RESEAU, headers=ENTETES_HTTP, stream=True
-        ) as reponse:
-            reponse.raise_for_status()
-            with open(partiel, "wb") as flux:
-                shutil.copyfileobj(reponse.raw, flux)
+        for essai in range(1, ESSAIS + 1):
+            try:
+                _recevoir(url, partiel)
+                break
+            except requests.RequestException as erreur:
+                if essai == ESSAIS:
+                    raise
+                print(f"    {periode} : {type(erreur).__name__}, reprise ({essai}/{ESSAIS - 1})",
+                      flush=True)
+                time.sleep(2 ** essai)
+        recue = _sha1(partiel)
+        if attendue and recue != attendue:
+            raise ValueError(f"empreinte SHA-1 {recue}, {attendue} attendue")
         os.replace(partiel, destination)
     except Exception as erreur:  # noqa: BLE001 - message lisible plutot qu'une trace
         if os.path.exists(partiel):
             os.remove(partiel)
         raise TelechargementImpossible(
-            f"{departement} / {annee} : {type(erreur).__name__} — {erreur} ({url})"
+            f"{periode} : {type(erreur).__name__} — {erreur} ({url})"
         ) from erreur
     return destination
 
@@ -175,13 +215,15 @@ def _blocs(chemin: str) -> Iterator[pd.DataFrame]:
         yield bloc
 
 
-def lignes_departement(
-    departement: str,
-    annee: int,
+def lignes_periode(
+    periode: str,
+    fichier: dict | None = None,
     codes_communes: Iterable[str] | None = None,
     forcer: bool = False,
 ) -> pd.DataFrame:
-    """Lignes DVF d'un departement-annee, restreintes aux communes demandees.
+    """Lignes DVF d'une periode, restreintes aux communes demandees.
+
+    Sans `fichier`, la periode doit deja etre en cache.
 
     Les lignes sans `type_local` decrivent des parcelles nues (terres, sols,
     terrains a batir). Elles sont ecartees des la lecture : le pipeline ne s'en
@@ -190,7 +232,9 @@ def lignes_departement(
     de la moitie du volume.
     """
 
-    chemin = telecharger_departement(departement, annee, forcer=forcer)
+    chemin = telecharger_periode(periode, fichier, forcer=forcer) if fichier else chemin_periode(periode)
+    if not os.path.exists(chemin):
+        raise TelechargementImpossible(f"{periode} : fichier absent du cache ({chemin})")
     perimetre = {str(c).zfill(5) for c in codes_communes} if codes_communes else None
 
     morceaux: list[pd.DataFrame] = []
@@ -212,29 +256,19 @@ def lignes_departement(
     from .ingestion import typer_colonnes_dvf
 
     lignes = pd.concat(morceaux, ignore_index=True)
-    return typer_colonnes_dvf(lignes, f"{annee}-{departement}.csv.gz")
+    lignes["nom_commune"] = noms_officiels(lignes["code_commune"]).fillna(lignes.get("nom_commune"))
+    return typer_colonnes_dvf(lignes, os.path.basename(chemin))
 
 
-def annees_disponibles(departement: str, candidates: Iterable[int]) -> list[int]:
-    """Millesimes reellement publies pour un departement.
+def noms_officiels(codes: pd.Series) -> pd.Series:
+    """Le nom de chaque commune dans le referentiel versionne (vide si inconnue).
 
-    Le millesime de l'annee en cours n'apparait qu'a la premiere publication
-    semestrielle : interroger plutot que supposer evite un echec au demarrage
-    chaque 1er janvier.
+    Depuis octobre 2026, Etalab derive les noms du fichier de la DGFiP, en
+    majuscules sans accents : « Aulnay sous Bois », « Paris 01 ». Le
+    referentiel donne « Aulnay-sous-Bois », « Paris 1er Arrondissement ».
     """
 
-    if requests is None:
-        return []
-    disponibles: list[int] = []
-    for annee in sorted(candidates):
-        if os.path.exists(chemin_departement(departement, annee)):
-            disponibles.append(annee)
-            continue
-        url = URL_DVF_DEPARTEMENT.format(annee=annee, departement=departement)
-        try:
-            reponse = requests.head(url, timeout=DELAI_RESEAU, headers=ENTETES_HTTP)
-            if reponse.status_code < 400:
-                disponibles.append(annee)
-        except Exception:  # noqa: BLE001 - une sonde qui echoue n'est pas bloquante
-            continue
-    return disponibles
+    from .territoires import referentiel_communes
+
+    noms = referentiel_communes().set_index("code_commune")["nom_commune"]
+    return codes.map(noms)

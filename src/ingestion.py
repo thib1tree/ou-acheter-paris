@@ -1,7 +1,7 @@
 """Ingestion et nettoyage des donnees DVF (Etalab).
 
 Le module ne lit pas de fichiers : il recoit des lignes DVF deja chargees —
-`src/telechargement.py` les tire des fichiers departementaux geo-dvf — les
+`src/telechargement.py` les tire des fichiers annuels d'Etalab — les
 normalise, puis reconstruit une ligne par *mutation* (une vente) exploitable
 pour le calcul du prix au m2. Il gere aussi les territoires precalcules, ou
 cette reconstruction est figee dans un parquet.
@@ -205,8 +205,8 @@ def _vers_numerique(serie: pd.Series) -> pd.Series:
 def typer_colonnes_dvf(brut: pd.DataFrame, origine: str = "") -> pd.DataFrame:
     """Met en forme des lignes DVF lues en texte : colonnes, types, blancs.
 
-    Appelee par `src/telechargement.py` sur les fichiers departementaux
-    geo-dvf, qui arrivent en `dtype=str`. Le typage est isole ici plutot que
+    Appelee par `src/telechargement.py` sur les fichiers annuels d'Etalab,
+    qui arrivent en `dtype=str`. Le typage est isole ici plutot que
     dans le lecteur : c'est lui qui decide du resultat de tout le pipeline, et
     il doit pouvoir etre teste sur des lignes construites a la main.
     """
@@ -219,7 +219,7 @@ def typer_colonnes_dvf(brut: pd.DataFrame, origine: str = "") -> pd.DataFrame:
         raise ValueError(
             f"{origine or 'Donnees DVF'} : colonnes DVF absentes {manquantes}. "
             "Le fichier n'a pas le format DVF attendu (source : "
-            "https://files.data.gouv.fr/geo-dvf/)."
+            "https://www.data.gouv.fr/datasets/demandes-de-valeurs-foncieres-geolocalisees)."
         )
 
     for colonne in COLONNES_NUMERIQUES:

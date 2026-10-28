@@ -47,11 +47,7 @@ from src.ingestion import (
     ecrire_territoire,
     reconstruire_mutations,
 )
-from src.telechargement import (
-    TelechargementImpossible,
-    annees_disponibles,
-    lignes_departement,
-)
+from src.telechargement import TelechargementImpossible, lignes_periode
 
 try:
     import requests
@@ -250,7 +246,7 @@ def regenerer_referentiel(source: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def preparer_mutations(cle: str, annees: list[int]) -> pd.DataFrame:
+def preparer_mutations(cle: str, annees: list[int], etat: millesime.EtatDistant | None = None) -> pd.DataFrame:
     perimetre = territoires.territoire(cle)
     journal(
         f"  {perimetre.nom} : {perimetre.nb_communes} communes, "
@@ -262,28 +258,34 @@ def preparer_mutations(cle: str, annees: list[int]) -> pd.DataFrame:
             + ", ".join(perimetre.departements_sans_dvf)
         )
 
+    # Un fichier par annee pour toute la France : chacun est lu une fois, en ne
+    # gardant que les communes du territoire.
+    etat = etat or millesime.interroger()
+    a_lire = millesime.fichiers_des_annees(etat, annees)
+    absentes = sorted(set(annees) - {millesime.Periode.depuis_cle(c).annee for c in a_lire})
+    if absentes:
+        journal(f"  ⚠ annee(s) non publiee(s) par Etalab : {', '.join(map(str, absentes))}")
+
     morceaux: list[pd.DataFrame] = []
     fichiers: list[str] = []
-    for departement in perimetre.departements:
-        if departement in territoires.DEPARTEMENTS_SANS_DVF:
+    for periode, fichier in a_lire.items():
+        try:
+            lignes = lignes_periode(periode, fichier, perimetre.codes_communes)
+        except TelechargementImpossible as erreur:
+            journal(f"    ⚠ {erreur}")
             continue
-        millesimes = annees_disponibles(departement, annees) or annees
-        for annee in millesimes:
-            try:
-                lignes = lignes_departement(departement, annee, perimetre.codes_communes)
-            except TelechargementImpossible as erreur:
-                journal(f"    ⚠ {erreur}")
-                continue
-            if lignes.empty:
-                continue
-            morceaux.append(lignes)
-            fichiers.append(f"{annee}-{departement}.csv.gz")
-            journal(f"    {departement} / {annee} : {len(lignes):>7} lignes")
+        if lignes.empty:
+            continue
+        morceaux.append(lignes)
+        fichiers.append(f"full-{periode}.csv.gz")
+        par_departement = lignes["code_commune"].str[:2].value_counts().sort_index()
+        journal(f"    {periode} : {len(lignes):>7} lignes ("
+                + ", ".join(f"{d} {n}" for d, n in par_departement.items()) + ")")
 
     if not morceaux:
         raise SystemExit(
             f"Aucune ligne DVF recuperee pour « {cle} ». Verifiez l'acces reseau a "
-            "files.data.gouv.fr."
+            "www.data.gouv.fr et static.data.gouv.fr."
         )
 
     brut = pd.concat(morceaux, ignore_index=True)
@@ -301,7 +303,7 @@ def preparer_mutations(cle: str, annees: list[int]) -> pd.DataFrame:
             "annees": sorted({int(a) for a in mutations["annee"].dropna().unique()}),
             "communes": sorted(mutations["code_commune"].dropna().unique().tolist()),
             "sections": int(mutations["code_section"].nunique()),
-            "source": "https://files.data.gouv.fr/geo-dvf/latest/csv/",
+            "source": millesime.URL_PAGE_JEU,
         },
     )
     journal(f"  parquet : {chemin} ({os.path.getsize(chemin) / 1_048_576:.1f} Mo)")
@@ -418,9 +420,8 @@ def main() -> int:
     analyseur.add_argument("--territoire", help="cle du territoire (ex. grand-paris, region-53)")
     analyseur.add_argument(
         "--annees", default="auto",
-        help="millesimes a couvrir, ex. 2021-2025 ou 2023,2024 ; par defaut, les cinq "
-        "dernieres annees completes publiees par Etalab, plus l'annee en cours si elle "
-        "l'est (voir src/millesime.py)",
+        help="annees a couvrir, ex. 2021-2026 ou 2023,2024 ; par defaut, les annees "
+        "touchees par les cinq derniers ans publies par Etalab (voir src/millesime.py)",
     )
     analyseur.add_argument("--grand-paris", action="store_true",
                            help="regenere la liste des communes de l'unite urbaine de Paris")
@@ -452,16 +453,11 @@ def main() -> int:
         territoires.territoires.cache_clear()
 
     if arguments.territoire:
-        if arguments.annees == "auto":
-            departements = [
-                d for d in territoires.territoire(arguments.territoire).departements
-                if d not in territoires.DEPARTEMENTS_SANS_DVF
-            ]
-            annees = millesime.interroger(departements).annees
-        else:
-            annees = _annees(arguments.annees)
-        journal(f"→ Territoire « {arguments.territoire} », millesimes {annees[0]}-{annees[-1]}")
-        mutations = preparer_mutations(arguments.territoire, annees)
+        etat = millesime.interroger()
+        annees = etat.annees if arguments.annees == "auto" else _annees(arguments.annees)
+        journal(f"→ Territoire « {arguments.territoire} », millesime {etat.millesime}, "
+                f"annees {annees[0]}-{annees[-1]}")
+        mutations = preparer_mutations(arguments.territoire, annees, etat)
         if not arguments.sans_contours:
             journal("→ Contours cadastraux")
             preparer_contours(

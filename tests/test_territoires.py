@@ -257,13 +257,13 @@ def test_territoire_absent_donne_un_message_actionnable(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# Lecture des fichiers departementaux telecharges
+# Lecture des fichiers annuels telecharges
 # --------------------------------------------------------------------------
 
 
 @pytest.fixture
-def departement_factice(tmp_path, monkeypatch):
-    """Ecrit un fichier departemental au format geo-dvf, comme Etalab le publie."""
+def fichier_factice(tmp_path, monkeypatch):
+    """Ecrit un fichier annuel au format des DVF geolocalisees, comme Etalab le publie."""
 
     monkeypatch.setenv("DVF_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(telechargement, "repertoire_cache_dvf", lambda: str(tmp_path))
@@ -277,25 +277,100 @@ def departement_factice(tmp_path, monkeypatch):
     nues["code_commune"] = "78124"
     brut = pd.concat([brut, nues, nues], ignore_index=True)
 
-    chemin = telechargement.chemin_departement("78", 2025)
+    chemin = telechargement.chemin_periode("2025")
     with gzip.open(chemin, "wt", encoding="utf-8", newline="") as flux:
         brut.to_csv(flux, index=False, sep=",")
     return brut
 
 
-def test_lecture_departementale_ecarte_les_parcelles_nues(departement_factice):
+def test_lecture_ecarte_les_parcelles_nues(fichier_factice):
     """Les lignes sans type de local sont plus de la moitie du volume."""
 
-    brut = departement_factice
-    lignes = telechargement.lignes_departement("78", 2025)
+    brut = fichier_factice
+    lignes = telechargement.lignes_periode("2025")
     assert len(lignes) < len(brut)
     assert lignes["type_local"].notna().all()
 
 
-def test_lecture_departementale_restreint_aux_communes_demandees(departement_factice):
-    del departement_factice
-    lignes = telechargement.lignes_departement("78", 2025, codes_communes=["78311"])
+def test_lecture_restreint_aux_communes_demandees(fichier_factice):
+    del fichier_factice
+    lignes = telechargement.lignes_periode("2025", codes_communes=["78311"])
     assert set(lignes["code_commune"]) == {"78311"}
+
+
+def test_les_noms_de_communes_sont_ceux_du_referentiel():
+    """Etalab publie « Aulnay sous Bois » et « Paris 01 » depuis octobre 2026."""
+
+    noms = telechargement.noms_officiels(pd.Series(["93005", "75101", "99999"]))
+    assert noms.iloc[:2].tolist() == ["Aulnay-sous-Bois", "Paris 1er Arrondissement"]
+    assert pd.isna(noms.iloc[2])
+
+
+class _Reponse:
+    """Une reponse `requests` en flux, pour un fichier publie."""
+
+    status_code = 200
+
+    def __init__(self, contenu: bytes):
+        self.contenu = contenu
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, chunk_size):
+        for i in range(0, len(self.contenu), chunk_size):
+            yield self.contenu[i:i + chunk_size]
+
+
+def test_un_fichier_altere_n_entre_pas_en_cache(tmp_path, monkeypatch):
+    """Le SHA-1 publie par data.gouv.fr protege d'un fichier tronque ou remplace."""
+
+    import hashlib
+
+    monkeypatch.setattr(telechargement, "repertoire_cache_dvf", lambda: str(tmp_path))
+    contenu = b"publie"
+    monkeypatch.setattr(telechargement.requests, "get", lambda *a, **k: _Reponse(contenu))
+    fichier = {"url": "https://static.data.gouv.fr/x/full-2025.csv.gz",
+               "sha1": hashlib.sha1(b"autre chose").hexdigest()}
+
+    with pytest.raises(telechargement.TelechargementImpossible, match="SHA-1"):
+        telechargement.telecharger_periode("2025", fichier)
+    assert list(tmp_path.iterdir()) == []
+
+    fichier["sha1"] = hashlib.sha1(contenu).hexdigest()
+    chemin = telechargement.telecharger_periode("2025", fichier)
+    assert Path(chemin).read_bytes() == contenu
+
+    # Une connexion coupee reprend la ou elle s'est arretee.
+    Path(chemin).unlink()
+    monkeypatch.setattr(telechargement.time, "sleep", lambda s: None)
+    appels = []
+
+    def coupee(url, headers, **options):
+        appels.append(headers.get("Range"))
+        if len(appels) == 1:
+            class Coupee(_Reponse):
+                def iter_content(self, chunk_size):
+                    yield self.contenu[:3]
+                    raise telechargement.requests.ConnectionError("Connection reset by peer")
+            return Coupee(contenu)
+        reprise = _Reponse(contenu[3:])
+        reprise.status_code = 206
+        return reprise
+
+    monkeypatch.setattr(telechargement.requests, "get", coupee)
+    assert Path(telechargement.telecharger_periode("2025", fichier)).read_bytes() == contenu
+    assert appels == [None, "bytes=3-"]
+
+    # En cache et intact : pas de nouveau telechargement.
+    monkeypatch.setattr(telechargement.requests, "get", lambda *a, **k: pytest.fail("retelecharge"))
+    assert telechargement.telecharger_periode("2025", fichier) == chemin
 
 
 # --------------------------------------------------------------------------

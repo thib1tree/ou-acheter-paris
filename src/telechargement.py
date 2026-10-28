@@ -26,6 +26,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import os
+import time
 from typing import Iterable, Iterator
 
 import pandas as pd
@@ -46,6 +47,9 @@ URL_UNITES_URBAINES = "https://www.insee.fr/fr/statistiques/fichier/2028028/tabl
 CODE_UU_PARIS = "00851"
 
 DELAI_RESEAU = 120  # secondes, entre deux paquets recus.
+
+#: Tentatives par fichier : une connexion coupee en cours de route reprend.
+ESSAIS = 5
 
 ENTETES_HTTP = {"User-Agent": "cartographie-dvf/1.0 (mise a jour des donnees)"}
 
@@ -115,6 +119,20 @@ def _sha1(chemin: str) -> str:
     return empreinte.hexdigest()
 
 
+def _recevoir(url: str, partiel: str) -> None:
+    """Complete `partiel` depuis `url`, en reprenant ou il s'est arrete."""
+
+    deja = os.path.getsize(partiel) if os.path.exists(partiel) else 0
+    entetes = {**ENTETES_HTTP, **({"Range": f"bytes={deja}-"} if deja else {})}
+    with requests.get(url, timeout=DELAI_RESEAU, headers=entetes, stream=True) as reponse:
+        reponse.raise_for_status()
+        # Un serveur qui ignore la reprise renvoie tout le fichier : on repart de zero.
+        mode = "ab" if deja and reponse.status_code == 206 else "wb"
+        with open(partiel, mode) as flux:
+            for paquet in reponse.iter_content(chunk_size=1 << 20):
+                flux.write(paquet)
+
+
 def telecharger_periode(periode: str, fichier: dict, forcer: bool = False) -> str:
     """Telecharge le fichier d'une periode et renvoie son chemin en cache.
 
@@ -122,9 +140,11 @@ def telecharger_periode(periode: str, fichier: dict, forcer: bool = False) -> st
     taille, empreinte SHA-1. Un fichier deja en cache qui n'a plus l'empreinte
     publiee (Etalab l'a republie) est retelecharge.
 
-    Le fichier est ecrit en flux : rien ne transite par la memoire, et un
-    telechargement interrompu ou altere ne laisse pas de fichier en cache
-    (ecriture dans un `.partiel` renomme seulement une fois complet et verifie).
+    Le fichier est ecrit en flux : rien ne transite par la memoire. Une
+    connexion coupee reprend la ou elle s'est arretee (`ESSAIS` fois au
+    plus), et un telechargement interrompu ou altere ne laisse pas de fichier
+    en cache (ecriture dans un `.partiel` renomme seulement une fois complet
+    et verifie).
     """
 
     destination = chemin_periode(periode)
@@ -140,18 +160,22 @@ def telecharger_periode(periode: str, fichier: dict, forcer: bool = False) -> st
     if not url:
         raise TelechargementImpossible(f"{periode} : aucune adresse de fichier")
     partiel = destination + ".partiel"
+    if os.path.exists(partiel):
+        os.remove(partiel)
     try:
-        empreinte = hashlib.sha1()
-        with requests.get(
-            url, timeout=DELAI_RESEAU, headers=ENTETES_HTTP, stream=True
-        ) as reponse:
-            reponse.raise_for_status()
-            with open(partiel, "wb") as flux:
-                for paquet in reponse.iter_content(chunk_size=1 << 20):
-                    empreinte.update(paquet)
-                    flux.write(paquet)
-        if attendue and empreinte.hexdigest() != attendue:
-            raise ValueError(f"empreinte SHA-1 {empreinte.hexdigest()}, {attendue} attendue")
+        for essai in range(1, ESSAIS + 1):
+            try:
+                _recevoir(url, partiel)
+                break
+            except requests.RequestException as erreur:
+                if essai == ESSAIS:
+                    raise
+                print(f"    {periode} : {type(erreur).__name__}, reprise ({essai}/{ESSAIS - 1})",
+                      flush=True)
+                time.sleep(2 ** essai)
+        recue = _sha1(partiel)
+        if attendue and recue != attendue:
+            raise ValueError(f"empreinte SHA-1 {recue}, {attendue} attendue")
         os.replace(partiel, destination)
     except Exception as erreur:  # noqa: BLE001 - message lisible plutot qu'une trace
         if os.path.exists(partiel):
@@ -232,4 +256,19 @@ def lignes_periode(
     from .ingestion import typer_colonnes_dvf
 
     lignes = pd.concat(morceaux, ignore_index=True)
+    lignes["nom_commune"] = noms_officiels(lignes["code_commune"]).fillna(lignes.get("nom_commune"))
     return typer_colonnes_dvf(lignes, os.path.basename(chemin))
+
+
+def noms_officiels(codes: pd.Series) -> pd.Series:
+    """Le nom de chaque commune dans le referentiel versionne (vide si inconnue).
+
+    Depuis octobre 2026, Etalab derive les noms du fichier de la DGFiP, en
+    majuscules sans accents : « Aulnay sous Bois », « Paris 01 ». Le
+    referentiel donne « Aulnay-sous-Bois », « Paris 1er Arrondissement ».
+    """
+
+    from .territoires import referentiel_communes
+
+    noms = referentiel_communes().set_index("code_commune")["nom_commune"]
+    return codes.map(noms)

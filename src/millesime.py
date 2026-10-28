@@ -118,12 +118,22 @@ class EtatDistant:
         return {"millesime": self.millesime, "annees": self.annees, "fichiers": self.fichiers}
 
 
-def _lire_json_http(adresse: str) -> dict:
+def _lire_json_http(adresse: str, essais: int = 4) -> dict:
+    import time
+
     import requests
 
-    reponse = requests.get(adresse, timeout=DELAI, headers=ENTETES)
-    reponse.raise_for_status()
-    return reponse.json()
+    for essai in range(1, essais + 1):
+        try:
+            reponse = requests.get(adresse, timeout=DELAI, headers=ENTETES)
+            reponse.raise_for_status()
+            return reponse.json()
+        except requests.ConnectionError:
+            # Une connexion coupee n'est pas une reponse : on redemande.
+            if essai == essais:
+                raise
+            time.sleep(2 ** essai)
+    raise AssertionError("inatteignable")
 
 
 def _fichier(ressource: dict) -> dict:
@@ -189,7 +199,8 @@ def differences(etat: EtatDistant, source: dict | None) -> list[str]:
         raisons.append(f"annees {source.get('annees')} -> {etat.annees}")
     anciens = source.get("fichiers") or {}
     if set(anciens) != set(etat.fichiers):
-        raisons.append(f"fichiers {sorted(anciens)} -> {sorted(etat.fichiers)}")
+        raisons.append(f"fichiers : {len(anciens)} -> {len(etat.fichiers)} "
+                       f"({', '.join(sorted(etat.fichiers))})")
     revises = sorted(
         cle for cle, fichier in etat.fichiers.items()
         if cle in anciens and anciens[cle] != fichier

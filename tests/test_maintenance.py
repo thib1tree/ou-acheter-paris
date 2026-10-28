@@ -462,6 +462,7 @@ def _ventes(annees, prix=5000, par_annee=100, communes=("75101", "92012", "93001
             lignes.append({
                 "annee": annee, "code_commune": communes[k % len(communes)],
                 "prix_m2": prix + (k % 7) * 10,
+                "date_mutation": pd.Timestamp(annee, 1 + k % 12, 1),
             })
     return pd.DataFrame(lignes)
 

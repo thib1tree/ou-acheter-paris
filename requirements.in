@@ -16,7 +16,7 @@
 # Bornes hautes sur les versions majeures : une mise à jour majeure ne doit
 # pas casser la construction. On les relève volontairement, tests à l'appui.
 
-pandas>=2.1,<4
-numpy>=1.24,<3
-pyarrow>=26.0.0,<27           # Territoires précalculés (parquet)
+pandas>=3.1.1,<4
+numpy>=2.5.4,<3
+pyarrow>=26.0.1,<27           # Territoires précalculés (parquet)
 requests>=2.28,<3         # DVF géolocalisées, Cadastre Etalab, gares, index d'Etalab

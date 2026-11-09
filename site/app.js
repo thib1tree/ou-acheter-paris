@@ -18,6 +18,11 @@
  * La carte elle-meme (`carte/carte.js`) recoit ses arguments par
  * `window.CarteDvf.appliquer`, et rend le choix de metrique par
  * `CarteDvfHote.metrique`.
+ *
+ * Les reglages s'ecrivent dans l'adresse de la page (`?budget=…&pieces=…`),
+ * a cote de la vue que la carte y tient (`#zoom/lat/lon`) : copier
+ * l'adresse, ou le bouton « Partager », transmet la carte telle qu'on la
+ * regarde.
  */
 (function () {
   "use strict";
@@ -32,7 +37,12 @@
   var reperes = { gares: null, etiquettes: null };
   var defaut = null;         // statistiques precalculees des filtres d'ouverture
   var affiche = null;        // dernier resultat pose sur la carte
-  var etat = { annees: [], surfaceMin: 0, surfaceMax: 0, types: [], etats: [], metrique: null };
+  var etat = {
+    annees: [], surfaceMin: 0, surfaceMax: 0, types: [], etats: [], pieces: [],
+    budget: null, metrique: null,
+  };
+  //: La metrique regardee avant de saisir un budget : l'effacer y ramene.
+  var metriqueAvantBudget = null;
 
   var worker = null;
   var workerPret = false;
@@ -65,6 +75,31 @@
     return p.length === 3 ? p[2] + "/" + p[1] + "/" + p[0] : "";
   }
 
+  function trierNombres(liste) {
+    return liste.slice().sort(function (a, b) { return a - b; });
+  }
+
+  // ------------------------------------------------------------- Budget
+
+  //: En deca, un nombre saisi se lit en milliers d'euros : « 350 » veut dire
+  //: 350 000 €, personne n'achete un logement pour 350 €.
+  var BUDGET_EN_MILLIERS = 10000;
+  var BUDGET_MAX = 99999999;
+
+  /* « 350 000 », « 350000 € », « 350 k », « 1,2 M », « 350 » : le budget en
+   * euros, ou `null` s'il n'y en a pas. */
+  function lireBudget(texte) {
+    var t = String(texte || "").toLowerCase().replace(/[\s  €]/g, "");
+    // « 350.000 » : des points de milliers ; « 1,2 » ou « 1.2 » : une decimale.
+    t = /^\d{1,3}(\.\d{3})+$/.test(t) ? t.replace(/\./g, "") : t.replace(",", ".");
+    var m = /^(\d+(?:\.\d+)?)(k|m)?$/.exec(t);
+    if (!m) return null;
+    var valeur = Number(m[1]) * (m[2] === "m" ? 1e6 : m[2] === "k" ? 1e3 : 1);
+    if (!m[2] && valeur < BUDGET_EN_MILLIERS) valeur *= 1000;
+    valeur = Math.round(valeur);
+    return valeur > 0 ? Math.min(valeur, BUDGET_MAX) : null;
+  }
+
   // ------------------------------------------------------------- Filtres
 
   /* Les filtres tels que le calcul les attend : les regles de
@@ -83,6 +118,8 @@
       ouvert: haut >= manifeste.filtres.surface_plafond,
       types: types.sort(),
       etats: etats.sort(),
+      // Aucun bouton enfonce : toutes les tailles, celles qu'on ignore comprises.
+      pieces: etat.pieces.length ? trierNombres(etat.pieces) : null,
     };
   }
 
@@ -90,14 +127,14 @@
    * individuelles (`charge.filtres_des_ventes`). */
   function filtresDesVentes(f) {
     return { an: f.annees, su: [f.surface[0], f.surface[1], f.ouvert], ty: f.types,
-      et: f.etats.length ? f.etats : null };
+      et: f.etats.length ? f.etats : null, pi: f.pieces, pm: regles.pieces_max };
   }
 
   function sontParDefaut(f) {
     var d = manifeste.filtres;
     return f.annees.join() === d.annees.join() && f.types.join() === d.types.slice().sort().join()
       && f.etats.join() === (d.etats || []).slice().sort().join()
-      && f.surface[0] === 0 && f.ouvert;
+      && f.surface[0] === 0 && f.ouvert && !f.pieces;
   }
 
   // ------------------------------------------------------------- Carte
@@ -193,6 +230,8 @@
   function recalculer() {
     var f = filtresCalcul();
     majRappelSurface(f);
+    majRappelBudget();
+    ecrireReglages(f);
     if (defaut && sontParDefaut(f) && etat.metrique === defaut.metrique) {
       demande += 1;
       signalerCalcul("");
@@ -204,7 +243,9 @@
     if (!worker) return;
     demande += 1;
     signalerCalcul(workerPret ? "Calcul…" : "Chargement des ventes…");
-    worker.postMessage({ type: "calculer", id: demande, filtres: f, metrique: etat.metrique });
+    worker.postMessage({
+      type: "calculer", id: demande, filtres: f, metrique: etat.metrique, budget: etat.budget,
+    });
   }
 
   var minuteur = 0;
@@ -331,9 +372,88 @@
     });
     etat.etats = (filtres.etats || []).slice();
     document.getElementById("filtre-etats").hidden = (filtres.etats || []).length < 2;
+
+    // Pieces : aucun bouton enfonce au depart, et c'est « toutes ». On
+    // enfonce ce qu'on cherche — un T3, c'est un clic, pas quatre.
+    var zonePieces = document.querySelector("#filtre-pieces .boutons");
+    var pieces = filtres.pieces || [];
+    pieces.forEach(function (nombre) {
+      var bouton = document.createElement("button");
+      bouton.type = "button";
+      var plus = nombre === regles.pieces_max;
+      bouton.textContent = nombre + (plus ? "+" : "");
+      bouton.title = nombre + (nombre > 1 ? " pièces" : " pièce") + (plus ? " et plus" : "");
+      bouton.dataset.pieces = nombre;
+      bouton.setAttribute("aria-pressed", "false");
+      bouton.addEventListener("click", function () {
+        bouton.setAttribute("aria-pressed", bouton.getAttribute("aria-pressed") === "true" ? "false" : "true");
+        etat.pieces = Array.prototype.filter.call(
+          zonePieces.querySelectorAll("button"),
+          function (b) { return b.getAttribute("aria-pressed") === "true"; }
+        ).map(function (b) { return Number(b.dataset.pieces); });
+        recalculer();
+      });
+      zonePieces.appendChild(bouton);
+    });
+    document.getElementById("filtre-pieces").hidden = pieces.length < 2;
+
+    // Budget : il se tape, se relit mis en forme, et choisit la metrique qui
+    // lui repond. L'effacer rend la carte d'avant.
+    var champBudget = document.getElementById("budget");
+    var effacer = document.getElementById("effacer-budget");
+    champBudget.addEventListener("input", function () {
+      effacer.hidden = !champBudget.value;
+      poserBudget(lireBudget(champBudget.value));
+      recalculerBientot();
+    });
+    champBudget.addEventListener("change", function () {
+      poserBudget(lireBudget(champBudget.value));
+      afficherBudget();
+      clearTimeout(minuteur);
+      recalculer();
+    });
+    champBudget.addEventListener("keydown", function (evenement) {
+      if (evenement.key === "Enter") champBudget.blur();
+    });
+    effacer.addEventListener("click", function () {
+      champBudget.value = "";
+      poserBudget(null);
+      afficherBudget();
+      clearTimeout(minuteur);
+      recalculer();
+      champBudget.focus();
+    });
     majRappelSurface(filtresCalcul());
   }
 
+  /* Le budget change : la metrique qui y repond le suit. */
+  function poserBudget(valeur) {
+    etat.budget = valeur;
+    var cle = regles.cle_budget;
+    if (valeur && etat.metrique !== cle) {
+      metriqueAvantBudget = etat.metrique;
+      etat.metrique = cle;
+    } else if (!valeur && etat.metrique === cle) {
+      etat.metrique = metriqueAvantBudget || regles.metrique_par_defaut;
+      metriqueAvantBudget = null;
+    }
+  }
+
+  /* Le champ montre le budget retenu, mis en forme : « 350 » devient
+   * « 350 000 ». */
+  function afficherBudget() {
+    var champ = document.getElementById("budget");
+    champ.value = etat.budget ? milliers(etat.budget) : "";
+    document.getElementById("effacer-budget").hidden = !etat.budget;
+  }
+
+  function majRappelBudget() {
+    var champ = document.getElementById("budget");
+    var regarde = etat.budget && etat.metrique === regles.cle_budget;
+    // Un budget saisi mais une autre metrique choisie sur la carte : le champ
+    // le dit, et un retour dedans rend la carte du budget.
+    champ.classList.toggle("en-retrait", !!etat.budget && !regarde);
+  }
   // Tiroir des filtres, sur telephone.
   function ouvrirFiltres(ouverts) {
     document.body.classList.toggle("filtres-ouverts", ouverts);
@@ -363,6 +483,145 @@
     document.getElementById("bouton-filtres").classList.add("appel");
   })();
 
+  // ------------------------------------------------------ Adresse partageable
+  //
+  // Les reglages tiennent dans la partie « ?… » de l'adresse, en mots
+  // lisibles ; la vue, elle, est dans la partie « #… », tenue par la carte.
+  // Seul ce qui s'ecarte de l'ouverture y figure : l'adresse d'une carte
+  // laissee telle quelle reste nue.
+
+  function motDe(libelle) {
+    return String(libelle).normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase().split(/[^a-z0-9]+/)[0];
+  }
+
+  function ecrireReglages(f) {
+    if (!window.history || !window.history.replaceState || !manifeste) return;
+    var d = manifeste.filtres;
+    var p = [];
+    // Les virgules restent lisibles : `?pieces=2,3` plutot que `2%2C3`.
+    var ajouter = function (cle, valeur) {
+      p.push(cle + "=" + encodeURIComponent(valeur).replace(/%2C/g, ","));
+    };
+    if (etat.budget) ajouter("budget", etat.budget);
+    if (f.pieces) ajouter("pieces", f.pieces.join(","));
+    if (etat.types.length && etat.types.length < d.types.length) {
+      ajouter("type", etat.types.map(motDe).sort().join(","));
+    }
+    if (f.surface[0] > 0 || !f.ouvert) ajouter("surface", f.surface[0] + "-" + (f.ouvert ? "" : f.surface[1]));
+    if (etat.annees.length && etat.annees.length < d.annees.length) {
+      ajouter("annees", trierNombres(etat.annees).join(","));
+    }
+    var etats = d.etats || [];
+    if (etat.etats.length && etat.etats.length < etats.length) {
+      ajouter("etat", etat.etats.map(motDe).sort().join(","));
+    }
+    var impliquee = etat.budget && etat.metrique === regles.cle_budget;
+    if (etat.metrique !== regles.metrique_par_defaut && !impliquee) ajouter("metrique", etat.metrique);
+    var adresse = window.location.pathname + (p.length ? "?" + p.join("&") : "") + window.location.hash;
+    if (adresse !== window.location.pathname + window.location.search + window.location.hash) {
+      window.history.replaceState(null, "", adresse);
+    }
+  }
+
+  /* Les reglages de l'adresse, verifies un a un : ce qui ne correspond a
+   * rien sur ce site (une annee sortie de la fenetre, un mot inconnu) est
+   * ignore, sans erreur. */
+  function lireReglages() {
+    var d = manifeste.filtres;
+    var params;
+    try { params = new URLSearchParams(window.location.search); } catch (e) { return; }
+    var liste = function (cle) {
+      var brut = params.get(cle);
+      return brut ? brut.split(",").map(function (x) { return x.trim(); }).filter(Boolean) : [];
+    };
+    var parMot = function (cle, possibles) {
+      var mots = liste(cle);
+      return possibles.filter(function (libelle) { return mots.indexOf(motDe(libelle)) >= 0; });
+    };
+
+    var annees = liste("annees").map(Number).filter(function (a) { return d.annees.indexOf(a) >= 0; });
+    if (annees.length) {
+      etat.annees = annees;
+      document.querySelectorAll("#filtre-annees button").forEach(function (b) {
+        b.setAttribute("aria-pressed", annees.indexOf(Number(b.dataset.annee)) >= 0 ? "true" : "false");
+      });
+    }
+    var surface = /^(\d{1,4})-(\d{0,4})$/.exec(params.get("surface") || "");
+    if (surface) {
+      etat.surfaceMin = Math.min(Number(surface[1]), d.surface_plafond);
+      etat.surfaceMax = surface[2] ? Math.min(Number(surface[2]), d.surface_plafond) : d.surface_plafond;
+      document.getElementById("surface-min").value = etat.surfaceMin;
+      document.getElementById("surface-max").value = etat.surfaceMax;
+    }
+    var pieces = liste("pieces").map(Number).filter(function (n) { return (d.pieces || []).indexOf(n) >= 0; });
+    if (pieces.length) {
+      etat.pieces = pieces;
+      document.querySelectorAll("#filtre-pieces button").forEach(function (b) {
+        b.setAttribute("aria-pressed", pieces.indexOf(Number(b.dataset.pieces)) >= 0 ? "true" : "false");
+      });
+    }
+    var cocher = function (selecteur, retenus) {
+      document.querySelectorAll(selecteur).forEach(function (c) { c.checked = retenus.indexOf(c.value) >= 0; });
+    };
+    var types = parMot("type", d.types);
+    if (types.length) { etat.types = types; cocher("#filtre-types input", types); }
+    var etats = parMot("etat", d.etats || []);
+    if (etats.length) { etat.etats = etats; cocher("#filtre-etats input", etats); }
+
+    var metrique = params.get("metrique");
+    var connue = regles.metriques_proposees.some(function (m) { return m[0] === metrique; });
+    if (connue && metrique !== regles.cle_budget) etat.metrique = metrique;
+    var budget = lireBudget(params.get("budget"));
+    if (budget) {
+      etat.budget = budget;
+      if (!connue || metrique === regles.cle_budget) {
+        metriqueAvantBudget = etat.metrique;
+        etat.metrique = regles.cle_budget;
+      }
+      afficherBudget();
+    }
+  }
+
+  /* « Partager » : la feuille de partage du telephone, sinon le
+   * presse-papiers. Le bouton dit ce qui s'est passe, puis redevient lui-meme. */
+  function partager() {
+    var bouton = document.getElementById("partager");
+    var texte = bouton.querySelector("span");
+    var annonce = document.getElementById("partage-etat");
+    var url = window.location.href;
+    var dire = function (message) {
+      texte.textContent = message;
+      annonce.textContent = message;
+      bouton.classList.add("fait");
+      clearTimeout(partager.minuteur);
+      partager.minuteur = setTimeout(function () {
+        texte.textContent = "Partager";
+        annonce.textContent = "";
+        bouton.classList.remove("fait");
+      }, 2200);
+    };
+    var copier = function () {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(
+          function () { dire("Lien copié"); },
+          function () { window.prompt("Copiez ce lien :", url); }
+        );
+      } else {
+        window.prompt("Copiez ce lien :", url);
+      }
+    };
+    var tactile = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    if (navigator.share && tactile) {
+      navigator.share({ title: document.title, url: url }).catch(function (erreur) {
+        if (erreur && erreur.name !== "AbortError") copier();
+      });
+    } else {
+      copier();
+    }
+  }
+  document.getElementById("partager").addEventListener("click", partager);
+
   // ------------------------------------------------------------- Pied de page
 
   /* La Licence Ouverte demande de citer la source et sa date : la periode
@@ -391,6 +650,13 @@
   // ------------------------------------------------------------- Demarrage
 
   window.CarteDvfHote.metrique = function (cle) {
+    // Le budget choisi sur la carte sans en avoir saisi : on en propose un,
+    // le prix median du territoire, plutot qu'une carte grise.
+    if (cle === regles.cle_budget && !etat.budget) {
+      etat.budget = manifeste.filtres.budget_suggere || 300000;
+      afficherBudget();
+    }
+    if (cle !== regles.cle_budget) metriqueAvantBudget = null;
     etat.metrique = cle;
     recalculer();
   };
@@ -409,6 +675,9 @@
       regles = manifeste.regles;
       etat.metrique = regles.metrique_par_defaut;
       construirePanneau();
+      lireReglages();
+      majRappelSurface(filtresCalcul());
+      majRappelBudget();
       poserPied();
       var f = manifeste.fichiers;
       return Promise.all([lireJson(f.defaut), lireJson(f.gares), lireJson(f.etiquettes)]);
@@ -418,7 +687,10 @@
       reperes.gares = recus[1];
       reperes.etiquettes = recus[2];
       poserSurCarte(defaut);
-      anticiper();
+      // Une adresse partagee avec des reglages : la carte s'ouvre sur les
+      // couleurs d'ouverture, le temps que le calcul pose les siennes.
+      if (sontParDefaut(filtresCalcul()) && etat.metrique === defaut.metrique) anticiper();
+      else recalculer();
     })
     .catch(function (erreur) {
       if (window.console) console.error("[site]", erreur);

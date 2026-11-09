@@ -976,6 +976,9 @@ def test_les_filtres_partent_en_regles_et_non_en_ventes_retenues():
         "ty": ["Appartement"],
         # Aucun filtre neuf / ancien pose : tout passe (`None`, pas `[]`).
         "et": None,
+        # Ni de pieces ; le plafond part quand meme, la carte en tire ses classes.
+        "pi": None,
+        "pm": 5,
     }
     assert charge["ty"] == ["Appartement"]
 
@@ -1128,3 +1131,63 @@ def test_une_vente_unique_ne_prive_pas_la_zone_de_ses_champs(transactions_reelle
     assert len(charge["codes"]) == 1
     assert len(charge["valeurs"][0]) == len(charge["champs"])
     assert "non calculable" in charge["notes"][0]
+
+
+# --------------------------------------------------------------------------
+# Pieces et budget
+# --------------------------------------------------------------------------
+
+
+def test_les_pieces_se_choisissent_par_classe_et_les_grands_logements_ensemble():
+    """« 5+ » retient le cinq-pieces comme le neuf-pieces ; une vente dont
+    les DVF taisent le nombre de pieces ne passe aucun choix, mais reste
+    tant que le filtre n'est pas pose."""
+
+    from src.stats import PIECES_MAX, classes_pieces, filtrer
+
+    ventes = pd.DataFrame({
+        "nb_pieces": pd.array([0, 1, 3, 5, 9, None], dtype="Int64"),
+        "annee": [2024] * 6,
+    })
+    assert PIECES_MAX == 5
+    assert classes_pieces(ventes).tolist() == [0, 1, 3, 5, 5, 0]
+    assert filtrer(ventes, Filtres(pieces=[5])).index.tolist() == [3, 4]
+    assert filtrer(ventes, Filtres(pieces=[1, 3])).index.tolist() == [1, 2]
+    assert len(filtrer(ventes, Filtres(pieces=None))) == 6
+    # Sans colonne de pieces, aucun choix ne passe : c'est aussi ce que lit
+    # le navigateur dans un fichier qui n'en a pas.
+    assert filtrer(ventes.drop(columns="nb_pieces"), Filtres(pieces=[1])).empty
+    assert donnees_carte.pieces_disponibles(ventes) == [1, 3, 5]
+
+
+def test_le_budget_colore_la_part_des_ventes_a_portee():
+    """Le budget est une metrique : la part des ventes au prix du budget ou
+    moins (bornes comprises), sur la palette des prix retournee — le vert dit
+    « a portee » comme il dit « bon marche »."""
+
+    ventes = pd.DataFrame({
+        "code_section": ["S1"] * 6 + ["S2"] * 6,
+        "valeur_fonciere": [100.0, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200],
+    })
+    parts = donnees_carte.parts_budget(ventes, "code_section", 300).set_index("code_section")
+    assert parts.loc["S1", "dans_budget"] == 3 and parts.loc["S1", "part_budget"] == 50
+    assert parts.loc["S2", "dans_budget"] == 0 and parts.loc["S2", "part_budget"] == 0
+
+    assert donnees_carte.PALETTE_BUDGET[-1] == PALETTE_SEQUENTIELLE[0]
+    legende = donnees_carte.legende_budget(350_000, "Gris : moins de 5 ventes")
+    assert legende["titre"] == "Part des ventes ≤ 350 000 €"
+    assert legende["graduations"][0] == "0 %" and legende["graduations"][-1] == "100 %"
+    assert "frais de notaire" in legende["note"]
+
+    # Les ventes, elles, sont a portee ou non : un seuil, pas un degrade.
+    echelle = donnees_carte.echelle_du_budget(350_000)
+    assert echelle["seuil"] == 350_000 and echelle["colonne"] == "va"
+
+    with pytest.raises(ValueError):
+        donnees_carte.calculer_couches(ventes, Filtres(), donnees_carte.CLE_BUDGET)
+
+
+def test_le_budget_propose_est_le_prix_median_arrondi():
+    ventes = pd.DataFrame({"valeur_fonciere": [180_000.0, 296_000.0, 412_000.0]})
+    assert donnees_carte.budget_suggere(ventes) == 300_000
+    assert donnees_carte.budget_suggere(ventes.iloc[:0]) == 300_000

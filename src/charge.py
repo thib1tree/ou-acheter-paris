@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import re
 
+import numpy as np
 import pandas as pd
 
 from src import geo, points
@@ -29,6 +30,7 @@ from src.stats import (
     METRIQUES,
     PALETTE_DIVERGENTE,
     PALETTE_SEQUENTIELLE,
+    PIECES_MAX,
     VOLUME_MIN_ANNUEL,
     EchelleCouleur,
     Filtres,
@@ -37,9 +39,11 @@ from src.stats import (
     couleurs_sections,
     echelle_et_grisees,
     etats_des_ventes,
+    classes_pieces,
     filtrer,
     formater_euros,
     formater_taux_annuel,
+    interpoler_serie,
     rendement_sections,
     statistiques_sections,
     voies_dominantes,
@@ -121,9 +125,17 @@ FOND_PAR_DEFAUT = next(iter(FONDS_DE_CARTE))
 CLE_RENDEMENT = "rendement"
 METRIQUE_BASE_RENDEMENT = "prix_m2_median"
 
-#: Liste proposee sur la carte : les niveaux de prix, puis leur evolution.
+#: « Ou mon budget suffit-il ? » : la part des ventes, avec les filtres
+#: actifs, dont le prix ne depasse pas le budget du visiteur. Comme
+#: l'evolution annuelle, ce n'est pas une colonne de `statistiques_sections`,
+#: et elle a besoin d'un parametre de plus — le budget lui-meme.
+CLE_BUDGET = "budget"
+
+#: Liste proposee sur la carte : les niveaux de prix, ce que permet un budget,
+#: puis l'evolution des prix.
 METRIQUES_PROPOSEES: tuple[tuple[str, str], ...] = tuple(
     [(cle, definition[0]) for cle, definition in METRIQUES.items()]
+    + [(CLE_BUDGET, "Part des ventes dans mon budget")]
     + [(CLE_RENDEMENT, "Évolution annuelle du prix médian au m²")]
 )
 LIBELLES_METRIQUES: dict[str, str] = dict(METRIQUES_PROPOSEES)
@@ -137,6 +149,29 @@ NOTE_RENDEMENT = (
     "Le taux mesure l'évolution du prix des biens vendus, pas celle d'un bien donné : "
     "une année où la section vend surtout des grands logements se lit comme une hausse. "
     "À lire comme un ordre de grandeur, pas comme un indice de marché."
+)
+
+#: Le budget se lit sur la palette des prix, retournee : le vert dit ici
+#: « a portee », comme il dit « bon marche » sur les niveaux de prix. Un
+#: visiteur qui passe d'une metrique a l'autre n'a pas a relire la legende
+#: pour savoir de quel cote est la bonne nouvelle.
+PALETTE_BUDGET: tuple[str, ...] = tuple(reversed(PALETTE_SEQUENTIELLE))
+
+#: Ce que le budget compte et ne compte pas, dans la legende.
+NOTE_BUDGET = (
+    "Part des ventes de la zone, avec les filtres actifs (années, surface, pièces, type, "
+    "neuf ou ancien), dont le prix ne dépasse pas ce budget. Prix de vente hors frais "
+    "de notaire (environ 7 à 8 % de plus dans l'ancien, 2 à 3 % dans le neuf)."
+)
+
+#: Graduations de la legende du budget : une part, de 0 a 100 %.
+GRADUATIONS_BUDGET: tuple[str, ...] = ("0 %", "25 %", "50 %", "75 %", "100 %")
+
+#: Champs ajoutes en tete de l'infobulle quand on regarde son budget : c'est
+#: la reponse a la question posee, elle passe avant le reste.
+CHAMPS_BUDGET: tuple[tuple[str, str], ...] = (
+    ("Dans le budget", "part"),
+    ("Ventes dans le budget", "entier"),
 )
 
 #: Champs de l'infobulle d'une zone : (libelle, format lu par `carte.js`).
@@ -227,6 +262,28 @@ def filtres_par_defaut(transactions: pd.DataFrame) -> Filtres:
     )
 
 
+def pieces_disponibles(transactions: pd.DataFrame) -> list[int]:
+    """Les choix du filtre « Pièces » : 1 a `PIECES_MAX` (« et plus »), ceux
+    qui ont des ventes."""
+
+    presentes = set(classes_pieces(transactions).unique())
+    return [classe for classe in range(1, PIECES_MAX + 1) if classe in presentes]
+
+
+def budget_suggere(transactions: pd.DataFrame) -> int:
+    """Budget propose a qui choisit la metrique sans en avoir saisi : le prix
+    median des ventes du territoire, arrondi a 10 000 €.
+
+    La carte s'ouvre ainsi sur une reponse, partagee entre le vert et le
+    rouge, plutot que sur un champ vide.
+    """
+
+    if transactions.empty:
+        return 300_000
+    median = float(transactions["valeur_fonciere"].median())
+    return int(max(round(median / 10_000), 1) * 10_000)
+
+
 def filtres_des_ventes(filtres: Filtres) -> dict:
     """Les filtres, tels que le navigateur les rejouera sur les ventes.
 
@@ -244,6 +301,10 @@ def filtres_des_ventes(filtres: Filtres) -> dict:
         "su": [float(surface[0]), float(surface[1]), bool(filtres.surface_max_ouvert)],
         "ty": list(filtres.types_bien) if filtres.types_bien else None,
         "et": list(filtres.etats) if filtres.etats else None,
+        # Le nombre de pieces arrive brut dans les tuiles : la carte le ramene
+        # a sa classe (`stats.classes_pieces`), dont voici le plafond.
+        "pi": [int(classe) for classe in filtres.pieces] if filtres.pieces else None,
+        "pm": PIECES_MAX,
     }
 
 
@@ -299,15 +360,21 @@ def couche(
     rendements: pd.DataFrame | None = None,
     reperes: dict[str, str] | None = None,
     libelles: dict[str, str] | None = None,
+    budgets: pd.DataFrame | None = None,
 ) -> dict:
     """Tableau compact `code -> couleur + chiffres` pour une maille donnee.
 
     `libelles` (voir `libelles_zones`) fixe le titre de chaque zone ; sans
-    lui, le titre est tire des ventes retenues.
+    lui, le titre est tire des ventes retenues. `budgets` (voir
+    `parts_budget`) ajoute en tete la part des ventes dans le budget.
     """
 
     mot = "commune" if niveau == CLE_COMMUNE else "section"
-    champs = list(CHAMPS_ZONE) + (list(CHAMPS_RENDEMENT) if rendements is not None else [])
+    champs = (
+        (list(CHAMPS_BUDGET) if budgets is not None else [])
+        + list(CHAMPS_ZONE)
+        + (list(CHAMPS_RENDEMENT) if rendements is not None else [])
+    )
 
     # Colonne par colonne plutot que ligne par ligne : a dix mille sections,
     # un `iterrows()` coute a lui seul le tiers du temps de reexecution.
@@ -333,6 +400,10 @@ def couche(
     if grisees:
         note_volume = f"Trop peu de ventes pour être représentatif — {mot} grisée"
         notes = [note_volume if code in grisees else None for code in codes]
+
+    if budgets is not None:
+        aligne = budgets.set_index(niveau).reindex(codes)
+        colonnes = [_colonne(aligne["part_budget"]), _colonne(aligne["dans_budget"])] + colonnes
 
     if rendements is not None:
         aligne = (
@@ -396,6 +467,56 @@ def legende_rendement(amplitude: float, libelle: str) -> dict:
     }
 
 
+def titre_budget(budget: float) -> str:
+    return f"Part des ventes ≤ {formater_euros(budget)}"
+
+
+def legende_budget(budget: float, note_gris: str) -> dict:
+    return {
+        "titre": titre_budget(budget),
+        "palette": list(PALETTE_BUDGET),
+        "graduations": list(GRADUATIONS_BUDGET),
+        "note_gris": note_gris,
+        "note": NOTE_BUDGET,
+    }
+
+
+def parts_budget(filtrees: pd.DataFrame, niveau: str, budget: float) -> pd.DataFrame:
+    """Par zone, le nombre de ventes au prix du budget ou moins, et leur part.
+
+    La part est en pourcentage, arrondie a l'unite (au pair, comme le reste) :
+    c'est elle qui decide de la couleur, et deux zones a 61,4 et 61,6 % n'ont
+    rien de different a montrer.
+    """
+
+    if filtrees.empty:
+        return pd.DataFrame({niveau: [], "dans_budget": [], "part_budget": []})
+    dans = (filtrees["valeur_fonciere"].to_numpy(dtype=float) <= float(budget)).astype("int64")
+    groupes = pd.DataFrame({niveau: filtrees[niveau].to_numpy(), "dans": dans}).groupby(
+        niveau, observed=True, sort=True
+    )["dans"]
+    comptes = groupes.agg(["sum", "size"]).reset_index()
+    comptes["part_budget"] = np.round(
+        comptes["sum"].to_numpy(dtype=float) * 100 / comptes["size"].to_numpy(dtype=float)
+    )
+    return comptes.rename(columns={"sum": "dans_budget"})[[niveau, "dans_budget", "part_budget"]]
+
+
+def echelle_du_budget(budget: float) -> dict:
+    """Les ventes, en mode budget : vertes a portee, rouges au-dela.
+
+    Plus de degrade : une vente est dans le budget ou ne l'est pas. Le seuil
+    part tel quel, et le GPU tranche, comme pour l'echelle des prix.
+    """
+
+    return {
+        "vide": False,
+        "palette": list(PALETTE_BUDGET),
+        "colonne": "va",
+        "seuil": float(budget),
+    }
+
+
 def echelle_des_ventes(echelle: EchelleCouleur | None, colonne: str) -> dict:
     """L'echelle de couleurs des ventes, transmise plutot qu'appliquee.
 
@@ -427,12 +548,14 @@ def couche_complete(
     libelle_metrique: str,
     reperes: dict[str, str] | None = None,
     libelles: dict[str, str] | None = None,
+    budget: float | None = None,
 ) -> tuple[dict, pd.DataFrame, EchelleCouleur]:
     """Couleurs, chiffres et legende d'une maille.
 
     Rend aussi ses statistiques et l'echelle des prix. Cette derniere sert a
     colorer les ventes individuelles : points et zones partagent ainsi une
-    seule et meme grille de lecture.
+    seule et meme grille de lecture. Avec un `budget`, la couleur dit la part
+    des ventes qu'il aurait permis de payer.
     """
 
     stats = statistiques_sections(filtrees, niveau)
@@ -470,16 +593,34 @@ def couche_complete(
         echelle, _ = echelle_et_grisees(stats, metrique, seuil_volume, cle=niveau)
         return charge, stats, echelle
 
-    couleurs, echelle, grisees = couleurs_sections(stats, metrique, seuil_volume, cle=niveau)
     note_gris = (
         f"Gris : moins de {seuil_volume + 1} ventes"
         if seuil_volume
         else "Gris : aucune vente avec les filtres actifs"
     )
-    charge = couche(
-        stats, couleurs, niveau, grisees=grisees, reperes=reperes, libelles=libelles
-    )
-    charge["legende"] = legende_prix(echelle, libelle_metrique, note_gris)
+    if budget is not None:
+        # Une part sur trois ventes ne dit rien du quartier : le seuil de
+        # volume grise les memes zones que pour les prix.
+        echelle, grisees = echelle_et_grisees(stats, metrique, seuil_volume, cle=niveau)
+        parts = parts_budget(filtrees, niveau, budget)
+        codes = stats[niveau].to_numpy() if not stats.empty else []
+        alignees = parts.set_index(niveau).reindex(codes)["part_budget"].to_numpy(dtype=float)
+        teintes = interpoler_serie(PALETTE_BUDGET, alignees / 100)
+        couleurs = {
+            code: (GRIS_DONNEES_INSUFFISANTES if code in grisees else teinte)
+            for code, teinte in zip(codes, teintes)
+        }
+        charge = couche(
+            stats, couleurs, niveau, grisees=grisees, reperes=reperes, libelles=libelles,
+            budgets=parts,
+        )
+        charge["legende"] = legende_budget(budget, note_gris)
+    else:
+        couleurs, echelle, grisees = couleurs_sections(stats, metrique, seuil_volume, cle=niveau)
+        charge = couche(
+            stats, couleurs, niveau, grisees=grisees, reperes=reperes, libelles=libelles
+        )
+        charge["legende"] = legende_prix(echelle, libelle_metrique, note_gris)
     charge["resume"] = (
         f"{len(filtrees):,}".replace(",", " ")
         + f" ventes sur {int(filtrees[niveau].nunique())} {mot}s"
@@ -495,19 +636,27 @@ def calculer_couches(
     niveaux: tuple[str, ...] = (CLE_SECTION, CLE_COMMUNE),
     reperes: dict[str, str] | None = None,
     libelles: dict[str, str] | None = None,
+    budget: float | None = None,
 ) -> tuple[dict[str, dict], dict, int]:
     """Couleurs, chiffres et legendes de chaque maille, pour un jeu de reglages.
 
     Rend les couches, l'echelle des ventes (sur celle des sections) et le
     nombre de ventes retenues par les filtres. `libelles` se calcule sur le
-    territoire entier (`libelles_zones`) : a defaut, il l'est ici.
+    territoire entier (`libelles_zones`) : a defaut, il l'est ici. `budget`
+    n'est lu que par la metrique `CLE_BUDGET`, qui l'exige.
     """
 
+    mode_rendement = choix_metrique == CLE_RENDEMENT
+    mode_budget = choix_metrique == CLE_BUDGET
+    if mode_budget and not (budget is not None and budget > 0):
+        raise ValueError("la métrique du budget demande un budget")
     if libelles is None:
         libelles = libelles_zones(transactions)
-
-    mode_rendement = choix_metrique == CLE_RENDEMENT
-    metrique = METRIQUE_BASE_RENDEMENT if mode_rendement else choix_metrique
+    metrique = (
+        METRIQUE_BASE_RENDEMENT if mode_rendement
+        else METRIQUE_PAR_DEFAUT if mode_budget
+        else choix_metrique
+    )
     libelle_metrique, colonne_metrique, _, _ = METRIQUES[metrique]
     filtrees = filtrer(transactions, filtres)
 
@@ -516,10 +665,12 @@ def calculer_couches(
     for niveau in niveaux:
         couches[niveau], _stats, echelle = couche_complete(
             filtrees, niveau, metrique, SEUIL_GRISAGE, mode_rendement, libelle_metrique, reperes,
-            libelles,
+            libelles, budget if mode_budget else None,
         )
         if niveau == CLE_SECTION:
             echelle_points = echelle
+    if mode_budget:
+        return couches, echelle_du_budget(budget), len(filtrees)
     return couches, echelle_des_ventes(echelle_points, colonne_metrique), len(filtrees)
 
 
@@ -727,6 +878,13 @@ def regles_calcul() -> dict:
         "metrique_par_defaut": METRIQUE_PAR_DEFAUT,
         "cle_rendement": CLE_RENDEMENT,
         "base_rendement": METRIQUE_BASE_RENDEMENT,
+        "cle_budget": CLE_BUDGET,
+        "palette_budget": list(PALETTE_BUDGET),
+        "champs_budget": [list(champ) for champ in CHAMPS_BUDGET],
+        "graduations_budget": list(GRADUATIONS_BUDGET),
+        # `{budget}` y est remplace par le budget mis en forme.
+        "titre_budget": titre_budget(0).replace(formater_euros(0), "{budget}"),
+        "pieces_max": PIECES_MAX,
         "seuil_grisage": SEUIL_GRISAGE,
         "volume_min_annuel": VOLUME_MIN_ANNUEL,
         "annees_min": ANNEES_MIN_TENDANCE,
@@ -749,5 +907,6 @@ def regles_calcul() -> dict:
             ),
             "gris_rendement": legende_rendement(2.0, "")["note_gris"],
             "rendement": NOTE_RENDEMENT,
+            "budget": NOTE_BUDGET,
         },
     }

@@ -203,6 +203,8 @@
       case "entier": return NOMBRE.format(valeur);
       case "reel": return DECIMAL2.format(valeur);
       case "pourcent": return (valeur >= 0 ? "+" : "") + DECIMAL.format(valeur) + " %";
+      // Une part, de 0 a 100 : pas de signe, elle n'est jamais negative.
+      case "part": return NOMBRE.format(valeur) + " %";
       case "taux": return (valeur >= 0 ? "+" : "") + DECIMAL.format(valeur) + " %/an";
       default: return String(valeur);
     }
@@ -2190,6 +2192,8 @@
       annees: brut.an ? new Set(brut.an) : null,
       types: brut.ty ? new Set(brut.ty) : null,
       etats: brut.et ? new Set(brut.et) : null,
+      pieces: brut.pi ? new Set(brut.pi) : null,
+      piecesMax: brut.pm || 5,
       suMin: brut.su ? brut.su[0] : null,
       suMax: brut.su ? brut.su[1] : null,
       suOuvert: brut.su ? !!brut.su[2] : true,
@@ -2270,6 +2274,12 @@
     if (filtre.annees && !filtre.annees.has(tuile.an[v])) return false;
     if (filtre.types && !typesOk[tuile.ty[v]]) return false;
     if (filtre.etats && !filtre.etats.has(etatDe(tuile, v))) return false;
+    if (filtre.pieces) {
+      // La classe de `stats.classes_pieces` : un nombre inconnu (`-1`, ou 0)
+      // ne passe aucun choix, les grands logements se comptent ensemble.
+      var pieces = tuile.pi[v];
+      if (!filtre.pieces.has(pieces > 0 ? Math.min(pieces, filtre.piecesMax) : 0)) return false;
+    }
     if (filtre.suMin !== null) {
       var surface = tuile.su[v];
       if (surface < 0 || surface < filtre.suMin) return false;
@@ -2298,6 +2308,13 @@
   function couleurDesPoints() {
     var echelle = args && args.points_echelle;
     if (!echelle || echelle.vide || !echelle.palette || echelle.palette.length < 2) return GRIS;
+    // Le budget : une vente est a portee (le bout vert de la palette) ou ne
+    // l'est pas (le bout rouge). Pas de nuance entre les deux.
+    if (typeof echelle.seuil === "number") {
+      return ["case", ["<", ["get", "v"], 0], GRIS,
+        ["<=", ["get", "v"], echelle.seuil], echelle.palette[echelle.palette.length - 1],
+        echelle.palette[0]];
+    }
     if (!(echelle.haut > echelle.bas)) return echelle.palette[echelle.palette.length >> 1];
     var paliers = ["interpolate", ["linear"], ["get", "v"]];
     for (var i = 0; i < echelle.palette.length; i++) {

@@ -204,6 +204,9 @@
     return {
       meta: meta, n: n, bornesCommunes: c.communes, section: c.section,
       annee: c.annee, type: c.type, etat: c.etat || new Uint8Array(n),
+      // Classe de `stats.classes_pieces` (0 : inconnu) ; un fichier sans
+      // colonne de pieces ne les connait pas, comme Python sans `nb_pieces`.
+      pieces: c.pieces || new Uint8Array(n),
       valeur: valeur, surface: surface, m2: m2,
       nbSections: meta.sections.codes.length, nbCommunes: meta.communes.codes.length,
     };
@@ -215,6 +218,7 @@
    * fichier (commune, puis prix au m² croissant). */
   function filtrer(v, filtres) {
     var anOk = new Uint8Array(256), tyOk = new Uint8Array(256), etOk = new Uint8Array(256);
+    var piOk = new Uint8Array(256);
     var annees = filtres.annees && filtres.annees.length ? filtres.annees : null;
     var types = filtres.types && filtres.types.length ? filtres.types : null;
     var etats = filtres.etats && filtres.etats.length ? filtres.etats : null;
@@ -226,6 +230,9 @@
     var etatsConnus = v.meta.etats || ["Ancien"];
     if (etats) etats.forEach(function (e) { var k = etatsConnus.indexOf(e); if (k >= 0) etOk[k] = 1; });
     else etOk.fill(1);
+    var pieces = filtres.pieces && filtres.pieces.length ? filtres.pieces : null;
+    if (pieces) pieces.forEach(function (p) { if (p > 0 && p < 256) piOk[p] = 1; });
+    else piOk.fill(1);
     var surface = filtres.surface || null;
     var mini = surface ? surface[0] : -Infinity;
     var maxi = surface && !filtres.ouvert ? surface[1] : Infinity;
@@ -237,7 +244,8 @@
       debuts[g] = k;
       for (var i = v.bornesCommunes[g]; i < v.bornesCommunes[g + 1]; i++) {
         var s = v.surface[i];
-        if (anOk[v.annee[i]] && tyOk[v.type[i]] && etOk[v.etat[i]] && s >= mini && s <= maxi) retenues[k++] = i;
+        if (anOk[v.annee[i]] && tyOk[v.type[i]] && etOk[v.etat[i]] && piOk[v.pieces[i]]
+            && s >= mini && s <= maxi) retenues[k++] = i;
       }
     }
     debuts[v.nbCommunes] = k;
@@ -337,15 +345,39 @@
     return r;
   }
 
-  /* Statistiques des deux mailles pour un jeu de filtres. */
-  function statistiques(v, filtres, complet) {
+  /* Les ventes retenues par les filtres, groupees par commune et par section. */
+  function groupes(v, filtres) {
     var communes = filtrer(v, filtres);
-    var sections = parSection(v, communes);
+    var g = {};
+    g[CLE_COMMUNE] = communes;
+    g[CLE_SECTION] = parSection(v, communes);
+    return g;
+  }
+
+  /* Statistiques des deux mailles pour un jeu de filtres. Les groupes
+   * restent attaches : la part des ventes dans un budget se compte dessus,
+   * sans refiltrer, chaque fois que le budget change. */
+  function statistiques(v, filtres, complet) {
+    var g = groupes(v, filtres);
     var s = {};
-    s[CLE_COMMUNE] = agreger(v, communes, v.nbCommunes, complet);
-    s[CLE_SECTION] = agreger(v, sections, v.nbSections, complet);
-    s.nb = communes.lignes.length;
+    s[CLE_COMMUNE] = agreger(v, g[CLE_COMMUNE], v.nbCommunes, complet);
+    s[CLE_SECTION] = agreger(v, g[CLE_SECTION], v.nbSections, complet);
+    s.nb = g[CLE_COMMUNE].lignes.length;
+    s.groupes = g;
     return s;
+  }
+
+  /* Par zone, le nombre de ventes au prix du budget ou moins
+   * (`charge.parts_budget`). */
+  function comptesBudget(v, groupesMaille, nz, budget) {
+    var lignes = groupesMaille.lignes, debuts = groupesMaille.debuts;
+    var dans = new Uint32Array(nz);
+    for (var z = 0; z < nz; z++) {
+      var k = 0;
+      for (var j = debuts[z]; j < debuts[z + 1]; j++) if (v.valeur[lignes[j]] <= budget) k++;
+      dans[z] = k;
+    }
+    return dans;
   }
 
   /* `stats.rendement_sections` : regression ponderee sur le logarithme des
@@ -417,8 +449,9 @@
     prix_total_median: "vmed", prix_total_moyen: "vmoy",
   };
 
-  /* `charge.couche_complete` pour une maille. */
-  function coucheComplete(v, stats, maille, cleMetrique, modeRendement, regles, reperes) {
+  /* `charge.couche_complete` pour une maille. `budget` n'est donne qu'a la
+   * metrique du budget. */
+  function coucheComplete(v, stats, maille, cleMetrique, modeRendement, regles, reperes, budget) {
     var agregats = stats[maille];
     var zones = maille === CLE_COMMUNE ? v.meta.communes : v.meta.sections;
     var nz = zones.codes.length;
@@ -479,9 +512,33 @@
       resume = fiables.length + " " + mot + "(s) sur " + presentes.length + " atteignent "
         + regles.annees_min + " années à " + regles.volume_min_annuel + " ventes ou plus ; "
         + "médiane du territoire " + formaterTauxAnnuel(mediane(tries, 0, tries.length)) + ".";
+    } else if (budget !== null && budget !== undefined) {
+      var dans = comptesBudget(v, stats.groupes[maille], nz, budget);
+      var rgbB = regles.palette_budget.map(composantes);
+      var grisees = 0;
+      couleurs = [];
+      notes = [];
+      presentes.forEach(function (z, rang) {
+        var part = arrondiPair(dans[z] * 100 / agregats.n[z]);
+        var grisee = agregats.n[z] <= seuil;
+        if (grisee) grisees++;
+        couleurs.push(grisee ? gris : interpoler(regles.palette_budget, rgbB, part / 100, gris));
+        notes.push(grisee ? regles.notes.volume[mot] : null);
+        valeurs[rang].unshift(part, dans[z]);
+      });
+      champs = regles.champs_budget.concat(champs);
+      legende = {
+        titre: regles.titre_budget.replace("{budget}", formaterEuros(budget)),
+        palette: regles.palette_budget.slice(),
+        graduations: regles.graduations_budget.slice(),
+        note_gris: regles.notes.gris_prix,
+        note: regles.notes.budget,
+      };
+      resume = milliers(String(stats.nb)) + " ventes sur " + presentes.length + " " + mot + "s"
+        + (grisees ? ", dont " + grisees + " grisée(s) faute de volume." : ".");
     } else {
       var rgbP = regles.palette_prix.map(composantes);
-      var grisees = 0;
+      grisees = 0;
       couleurs = [];
       notes = [];
       presentes.forEach(function (z) {
@@ -520,25 +577,32 @@
   }
 
   /* `charge.calculer_couches` : couches des deux mailles, echelle des ventes
-   * (celle des sections) et nombre de ventes retenues. */
-  function couches(v, stats, choixMetrique, regles, reperes) {
+   * (celle des sections) et nombre de ventes retenues. `budget` n'est lu que
+   * par la metrique du budget, qui l'exige. */
+  function couches(v, stats, choixMetrique, regles, reperes, budget) {
     var modeRendement = choixMetrique === regles.cle_rendement;
-    var cle = modeRendement ? regles.base_rendement : choixMetrique;
+    var modeBudget = choixMetrique === regles.cle_budget;
+    if (modeBudget && !(budget > 0)) throw new Error("la métrique du budget demande un budget");
+    if (modeBudget && !stats.groupes) throw new Error("statistiques sans leurs groupes de ventes");
+    var cle = modeRendement ? regles.base_rendement
+      : modeBudget ? regles.metrique_par_defaut : choixMetrique;
     var sortie = {}, echellePoints = null, colonne = null;
     [CLE_SECTION, CLE_COMMUNE].forEach(function (maille) {
-      var c = coucheComplete(v, stats, maille, cle, modeRendement, regles, reperes);
+      var c = coucheComplete(v, stats, maille, cle, modeRendement, regles, reperes,
+        modeBudget ? budget : null);
       sortie[maille] = c.couche;
       if (maille === CLE_SECTION) { echellePoints = c.echelle; colonne = c.colonne; }
     });
-    return {
-      couches: sortie,
-      echelle_points: {
+    // En mode budget, une vente est a portee ou ne l'est pas : un seuil, pas
+    // un degrade (`charge.echelle_du_budget`).
+    var echelle = modeBudget
+      ? { vide: false, palette: regles.palette_budget.slice(), colonne: "va", seuil: budget }
+      : {
         bas: echellePoints.bas, haut: echellePoints.haut, vide: echellePoints.vide,
         palette: regles.palette_prix.slice(),
         colonne: colonne === "prix_m2" ? "m2" : "va",
-      },
-      nb: stats.nb,
-    };
+      };
+    return { couches: sortie, echelle_points: echelle, nb: stats.nb };
   }
 
   /* La metrique a-t-elle besoin des medianes qui demandent un tri ? */
@@ -548,6 +612,7 @@
 
   return {
     lireVentes: lireVentes,
+    groupes: groupes,
     statistiques: statistiques,
     couches: couches,
     exigeComplet: exigeComplet,

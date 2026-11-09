@@ -13,7 +13,7 @@
  *
  * Messages recus :
  *   { type: "charger", ventes, meta, voies, regles }   adresses et regles
- *   { type: "calculer", id, filtres, metrique }
+ *   { type: "calculer", id, filtres, metrique, budget }
  * Messages envoyes :
  *   { type: "pret", nb }  ou  { type: "erreur", message }
  *   { type: "couches", id, complet, couches, echelle_points, nb }
@@ -52,14 +52,25 @@ function lireJson(adresse) {
   });
 }
 
+/* Seules les dernieres statistiques gardent leurs groupes de ventes (quelques
+ * megaoctets) : c'est sur elles qu'on fait varier le budget. Les autres les
+ * retrouveront, au besoin, par un filtrage (`avecGroupes`). */
 function retenir(cle, stats) {
   memoire.delete(cle);
+  memoire.forEach(function (anciennes) { delete anciennes.groupes; });
   memoire.set(cle, stats);
   while (memoire.size > PLAFOND_MEMOIRE) memoire.delete(memoire.keys().next().value);
 }
 
-function envoyer(id, stats, metrique, complet) {
-  var resultat = CalculDvf.couches(ventes, stats, metrique, regles, reperes);
+function avecGroupes(stats, filtres) {
+  if (!stats.groupes) stats.groupes = CalculDvf.groupes(ventes, filtres);
+  return stats;
+}
+
+function envoyer(id, stats, message, complet) {
+  var metrique = message.metrique;
+  if (metrique === regles.cle_budget) avecGroupes(stats, message.filtres);
+  var resultat = CalculDvf.couches(ventes, stats, metrique, regles, reperes, message.budget);
   postMessage({
     type: "couches", id: id, complet: complet, couches: resultat.couches,
     echelle_points: resultat.echelle_points, nb: resultat.nb,
@@ -72,14 +83,14 @@ function calculer(message) {
   var connues = memoire.get(cle);
   if (connues && connues.complet) {
     retenir(cle, connues);
-    envoyer(id, connues, message.metrique, true);
+    envoyer(id, connues, message, true);
     return;
   }
   var complet = CalculDvf.exigeComplet(message.metrique);
   var stats = connues && !complet ? connues : CalculDvf.statistiques(ventes, message.filtres, complet);
   stats.complet = complet;
   retenir(cle, stats);
-  envoyer(id, stats, message.metrique, complet);
+  envoyer(id, stats, message, complet);
   if (complet) return;
   // Le second temps attend son tour : un filtre arrive entre-temps passe
   // devant, et ce calcul-ci devient inutile.
@@ -88,7 +99,7 @@ function calculer(message) {
     var entieres = CalculDvf.statistiques(ventes, message.filtres, true);
     entieres.complet = true;
     retenir(cle, entieres);
-    envoyer(id, entieres, message.metrique, true);
+    envoyer(id, entieres, message, true);
   }, 0);
 }
 

@@ -77,6 +77,11 @@ PALETTE_DIVERGENTE: tuple[str, ...] = (
 #: Remplissage des sections sans donnee exploitable.
 GRIS_DONNEES_INSUFFISANTES = "#d9d9d9"
 
+#: Nombre de pieces a partir duquel les logements sont reunis : « 5 et plus ».
+#: Au-dela, les ventes se comptent par centaines sur tout le territoire, et
+#: un acheteur qui cherche six pieces ne refuse pas sept.
+PIECES_MAX = 5
+
 
 @dataclass
 class Filtres:
@@ -92,6 +97,9 @@ class Filtres:
     types_bien: Sequence[str] | None = None
     #: Neuf (VEFA) et/ou ancien (`ingestion.ETAT_NEUF`, `ETAT_ANCIEN`).
     etats: Sequence[str] | None = None
+    #: Nombres de pieces principales retenus, de 1 a `PIECES_MAX` (qui vaut
+    #: « et plus »), voir `classes_pieces`.
+    pieces: Sequence[int] | None = None
 
 
 def filtrer(transactions: pd.DataFrame, filtres: Filtres) -> pd.DataFrame:
@@ -121,7 +129,25 @@ def filtrer(transactions: pd.DataFrame, filtres: Filtres) -> pd.DataFrame:
     if filtres.etats:
         masque &= etats_des_ventes(df).isin(list(filtres.etats))
 
+    if filtres.pieces:
+        masque &= classes_pieces(df).isin([int(classe) for classe in filtres.pieces])
+
     return df[masque.fillna(False)]
+
+
+def classes_pieces(transactions: pd.DataFrame) -> pd.Series:
+    """Le nombre de pieces de chaque vente, tel que le filtre le propose.
+
+    De 1 a `PIECES_MAX`, ce dernier pour « et plus ». `0` quand les DVF ne
+    le disent pas (moins d'une vente sur mille) : la vente ne passe alors
+    aucun choix de pieces, mais reste tant que le filtre n'est pas pose.
+    """
+
+    if "nb_pieces" not in transactions.columns:
+        return pd.Series(0, index=transactions.index, dtype="int64")
+    nombre = pd.to_numeric(transactions["nb_pieces"], errors="coerce")
+    nombre = pd.Series(nombre.to_numpy(dtype="float64", na_value=np.nan), index=transactions.index)
+    return nombre.fillna(0).clip(lower=0, upper=PIECES_MAX).astype("int64")
 
 
 def etats_des_ventes(transactions: pd.DataFrame) -> pd.Series:

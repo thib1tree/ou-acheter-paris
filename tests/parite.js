@@ -22,7 +22,7 @@ const resultat = lire("scenarios.json").map((scenario) => {
   const stats = Calcul.statistiques(ventes, scenario.filtres, true);
   const parMetrique = {};
   for (const metrique of scenario.metriques) {
-    parMetrique[metrique] = Calcul.couches(ventes, stats, metrique, regles, reperes);
+    parMetrique[metrique] = Calcul.couches(ventes, stats, metrique, regles, reperes, scenario.budget);
   }
   return parMetrique;
 });

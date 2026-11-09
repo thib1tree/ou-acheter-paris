@@ -186,3 +186,48 @@ body {
   #sous-titre .suite { display: inline; }
   #pied { padding-top: 2px; padding-bottom: 2px; }
 }
+
+/* ------------------------------------------------------------------ Budget
+   Un seul champ, l'unite dedans : on tape un nombre, on lit un prix. */
+.champ-budget { position: relative; display: flex; align-items: center; }
+.champ-budget input {
+  font: inherit; font-size: 15px; font-variant-numeric: tabular-nums;
+  width: 100%; box-sizing: border-box; padding: 7px 52px 7px 10px;
+  border: 1px solid #bbb; border-radius: 6px; color: var(--texte); background: #fff;
+}
+.champ-budget input:focus-visible { outline: 2px solid var(--rouge); outline-offset: -1px; border-color: var(--rouge); }
+.champ-budget .unite { position: absolute; right: 10px; color: var(--discret); pointer-events: none; }
+.champ-budget button {
+  position: absolute; right: 26px; border: 0; background: transparent; cursor: pointer;
+  color: var(--discret); font-size: 18px; line-height: 1; padding: 4px 6px; border-radius: 4px;
+}
+.champ-budget button:hover, .champ-budget button:focus-visible { color: var(--texte); background: #eee; }
+/* Un budget saisi, mais une autre metrique choisie sur la carte : le champ
+   s'efface d'un ton, sans disparaitre. */
+.champ-budget input.en-retrait { color: var(--discret); background: #f3f3f3; }
+
+/* --------------------------------------------------------------- Partager
+   A droite de l'en-tete, discret : un contour, pas un aplat, pour ne pas
+   disputer l'attention a la carte ni a la pastille « Filtres ». */
+#partager {
+  margin-left: auto; flex: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  font: inherit; font-size: 13px; color: #444;
+  background: #fff; border: 1px solid #c9c9c9; border-radius: 999px;
+  padding: 4px 12px; cursor: pointer;
+}
+#partager:hover, #partager:focus-visible { color: var(--texte); border-color: #999; background: #f6f6f6; }
+#partager.fait { color: #00695c; border-color: #2f9a83; }
+
+.visuellement-cache {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+@media (max-width: 640px), (max-height: 500px) {
+  .champ-budget input { font-size: 16px; padding-top: 9px; padding-bottom: 9px; }
+  /* Sur telephone, l'icone seule : le titre a besoin de la place. */
+  #partager { order: 3; padding: 7px; }
+  #partager span { display: none; }
+  #partager.fait span { display: inline; }
+}

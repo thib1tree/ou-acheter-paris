@@ -46,7 +46,16 @@ def _filtres_js(filtres: Filtres) -> dict:
         "ouvert": bool(filtres.surface_max_ouvert),
         "types": list(filtres.types_bien) if filtres.types_bien else None,
         "etats": list(filtres.etats) if filtres.etats else None,
+        "pieces": list(filtres.pieces) if filtres.pieces else None,
     }
+
+
+#: Budget des scenarios qui n'en donnent pas : la metrique du budget en exige un.
+BUDGET = 350_000.0
+
+
+def _budget(scenario) -> float:
+    return scenario[2] if len(scenario) > 2 else BUDGET
 
 
 def _executer_node(tmp_path: Path, transactions: pd.DataFrame, scenarios, reperes) -> list:
@@ -57,7 +66,7 @@ def _executer_node(tmp_path: Path, transactions: pd.DataFrame, scenarios, repere
     (tmp_path / "regles.json").write_text(json.dumps(charge.regles_calcul(), ensure_ascii=False))
     (tmp_path / "reperes.json").write_text(json.dumps(reperes, ensure_ascii=False))
     (tmp_path / "scenarios.json").write_text(json.dumps(
-        [{"filtres": _filtres_js(f), "metriques": metriques} for f, metriques in scenarios]
+        [{"filtres": _filtres_js(s[0]), "metriques": s[1], "budget": _budget(s)} for s in scenarios]
     ))
     subprocess.run(
         ["node", str(RACINE / "tests" / "parite.js"), str(tmp_path)],
@@ -100,10 +109,12 @@ def _comparer(transactions, scenarios, reperes, tmp_path) -> None:
     libelles = charge.libelles_zones(transactions)
     obtenus = _executer_node(tmp_path, transactions, scenarios, reperes)
     ecarts: list[str] = []
-    for (filtres, metriques), parMetrique in zip(scenarios, obtenus):
+    for scenario, parMetrique in zip(scenarios, obtenus):
+        filtres, metriques = scenario[0], scenario[1]
         for metrique in metriques:
             couches, echelle, nb = charge.calculer_couches(
-                transactions, filtres, metrique, (CLE_SECTION, CLE_COMMUNE), reperes, libelles
+                transactions, filtres, metrique, (CLE_SECTION, CLE_COMMUNE), reperes, libelles,
+                _budget(scenario) if metrique == charge.CLE_BUDGET else None,
             )
             attendu = json.loads(json.dumps(
                 {"couches": couches, "echelle_points": echelle, "nb": nb}
@@ -145,6 +156,11 @@ def test_le_navigateur_retrouve_les_chiffres_de_python(transactions, tmp_path):
                  types_bien=defaut.types_bien, etats=["Neuf (VEFA)"]), METRIQUES),
         (Filtres(annees=annees[1:], surface=(20.0, 90.0), surface_max_ouvert=False,
                  types_bien=["Appartement"], etats=["Ancien"]), ["prix_m2_median", "rendement"]),
+        # Des trois pieces et des cinq et plus ; un petit budget, puis un grand.
+        (Filtres(annees=annees, surface=defaut.surface, surface_max_ouvert=True,
+                 types_bien=defaut.types_bien, pieces=[3]), METRIQUES, 250_000.0),
+        (Filtres(annees=annees[-3:], surface=defaut.surface, surface_max_ouvert=True,
+                 types_bien=["Maison"], pieces=[1, 5]), ["prix_m2_median", "budget"], 1_200_000.0),
     ]
     _comparer(transactions, scenarios, charge.reperes_voies(transactions), tmp_path)
 
@@ -184,6 +200,8 @@ def _synthetique() -> pd.DataFrame:
             "adresse": f"{i % 9} rue {['de Paris', 'Gambetta', 'Victor Hugo'][i % 3]}",
             "valeur_fonciere": valeur,
             "surface_bati": surface,
+            # 0 et vide : les DVF ne disent pas toujours le nombre de pieces.
+            "nb_pieces": [0, 1, 2, 3, 4, 5, 6, 9, None][i % 9],
         })
     lignes.append({**lignes[0], "id_mutation": "seule", "code_section": "92040000ZZ",
                    "section_courte": "ZZ", "code_commune": "92040", "nom_commune": communes["92040"]})
@@ -205,6 +223,10 @@ def test_les_cas_limites_sont_identiques(tmp_path):
         (Filtres(annees=None, surface=None, types_bien=None, etats=["Neuf (VEFA)"]), METRIQUES),
         (Filtres(annees=(2022, 2023), surface=(30.0, 90.0), surface_max_ouvert=False,
                  types_bien=["Appartement"], etats=["Ancien"]), METRIQUES),
+        # Un budget egal au prix d'une vente : elle y est (`<=`, pas `<`).
+        (tout, ["budget"], float(ventes["valeur_fonciere"].iloc[0])),
+        # Des pieces, dont des ventes qui n'en disent pas le nombre.
+        (Filtres(annees=None, surface=None, types_bien=None, pieces=[2, 5]), METRIQUES, 500_000.5),
         # Aucune vente ne passe : cartes vides, legendes lisibles.
         (Filtres(annees=(2021,), surface=(5000.0, 6000.0), surface_max_ouvert=False,
                  types_bien=None), METRIQUES),

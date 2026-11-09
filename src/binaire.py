@@ -18,9 +18,9 @@ Trois decisions en font un fichier de 3 Mo compresse pour 650 000 ventes :
    par prix au m² croissant. Filtrer conserve cet ordre : la mediane au m²
    d'une commune se lit alors sans rien trier, et celle d'une section apres
    une simple repartition stable par section (tri par comptage, lineaire).
-3. **Des index, pas des codes.** Section, annee, type et etat (neuf ou
-   ancien) sont des entiers ; les codes et les titres des zones sont ecrits
-   une fois, dans les metadonnees.
+3. **Des index, pas des codes.** Section, annee, type, etat (neuf ou
+   ancien) et nombre de pieces sont des entiers ; les codes et les titres des
+   zones sont ecrits une fois, dans les metadonnees.
 
 Les colonnes sont ecrites les plus larges d'abord, en petit-boutiste : chaque
 colonne commence a une adresse multiple de sa largeur, et le navigateur les lit
@@ -32,7 +32,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from src.stats import CLE_COMMUNE, CLE_SECTION, etats_des_ventes
+from src.stats import CLE_COMMUNE, CLE_SECTION, classes_pieces, etats_des_ventes
 
 #: Index de section reserve aux ventes sans section (aucune dans les donnees
 #: actuelles : le cas est prevu, pas observe).
@@ -70,6 +70,7 @@ def encoder_ventes(
         [CLE_COMMUNE, CLE_SECTION, "annee", "type_bien", "valeur_fonciere", "surface_bati", "prix_m2"]
     ].copy()
     ventes["etat"] = etats_des_ventes(transactions)
+    ventes["pieces"] = classes_pieces(transactions)
     ventes = ventes.sort_values([CLE_COMMUNE, "prix_m2"], kind="stable").reset_index(drop=True)
 
     communes = sorted(str(c) for c in ventes[CLE_COMMUNE].dropna().unique())
@@ -106,6 +107,8 @@ def encoder_ventes(
         ("annee", (annees - annee0).astype("u1")),
         ("type", pd.Index(types).get_indexer(ventes["type_bien"].astype(str)).astype("u1")),
         ("etat", pd.Index(etats).get_indexer(ventes["etat"]).astype("u1")),
+        # La classe de `stats.classes_pieces` : 1 a 5 (« et plus »), 0 si inconnu.
+        ("pieces", ventes["pieces"].to_numpy().astype("u1")),
         ("centimes", centimes.astype("u1")),
         ("centiemes", centiemes.astype("u1")),
     ]

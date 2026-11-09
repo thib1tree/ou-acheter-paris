@@ -7,6 +7,12 @@ où acheter : prix au m² par commune et par quartier, chaque vente une à une e
 évolution des prix, et les gares actuelles et à venir (Grand Paris Express, tramways,
 RER).
 
+On y saisit son budget : la carte montre alors, quartier par quartier, la part des
+ventes qu'il aurait permis de payer, et chaque vente, au zoom, en vert si elle y entre.
+Les filtres (années, surface, nombre de pièces, type, neuf ou ancien) s'appliquent à
+tout, et s'écrivent dans l'adresse de la page avec la vue : un lien, ou le bouton
+« Partager », transmet la carte telle qu'on la regarde.
+
 Gratuit, sans publicité, sans compte, sans cookie ni mesure d'audience. Voir les
 [mentions légales et la confidentialité](site/mentions-legales.html).
 

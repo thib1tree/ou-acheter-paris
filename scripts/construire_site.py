@@ -453,6 +453,8 @@ def construire(cle: str, sortie: Path, adresse: str | None = None) -> dict:
             "surface_plafond": charge.plafond_surface(transactions),
             "types": charge.types_disponibles(transactions),
             "etats": charge.etats_disponibles(transactions),
+            "pieces": charge.pieces_disponibles(transactions),
+            "budget_suggere": charge.budget_suggere(transactions),
         },
         "regles": charge.regles_calcul(),
         "fonds": charge.FONDS_DE_CARTE,

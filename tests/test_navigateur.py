@@ -880,6 +880,144 @@ def test_la_metrique_se_choisit_sur_la_carte_et_recolore_tout(bureau, annees):
 
 
 # --------------------------------------------------------------------------
+# Pieces, budget et adresse partageable
+# --------------------------------------------------------------------------
+
+
+def _parametres(page) -> dict:
+    return page.page.evaluate("() => Object.fromEntries(new URLSearchParams(location.search))")
+
+
+def test_les_pieces_se_choisissent_d_un_clic(bureau, ventes):
+    """Aucun bouton enfonce : toutes les tailles. Un clic sur « 3 », et la
+    carte ne compte plus que les trois-pieces, avec les chiffres de Python ;
+    l'adresse le retient."""
+
+    from src.stats import classes_pieces
+
+    boutons = bureau.page.locator("#filtre-pieces button")
+    assert boutons.all_inner_texts() == ["1", "2", "3", "4", "5+"]
+    assert boutons.evaluate_all("(bs) => bs.every((b) => b.getAttribute('aria-pressed') === 'false')")
+    classes = classes_pieces(ventes)
+
+    calculs = bureau.suivi()["calculs"]
+    bureau.page.locator("#filtre-pieces button", has_text="3").click()
+    bureau.attendre_calcul(calculs)
+    bureau.page.wait_for_function(
+        "(n) => window.siteDvf.nb === n", arg=int((classes == 3).sum()), timeout=ATTENTE_MS
+    )
+    assert _parametres(bureau) == {"pieces": "3"}
+
+    bureau.page.locator("#filtre-pieces button", has_text="5+").click()
+    bureau.page.wait_for_function(
+        "(n) => window.siteDvf.nb === n", arg=int(classes.isin([3, 5]).sum()), timeout=ATTENTE_MS
+    )
+    assert _parametres(bureau) == {"pieces": "3,5"}
+
+    for texte in ("3", "5+"):
+        bureau.page.locator("#filtre-pieces button", has_text=texte).click()
+    bureau.page.wait_for_function("(n) => window.siteDvf.nb === n", arg=len(ventes), timeout=ATTENTE_MS)
+    assert _parametres(bureau) == {}
+
+
+def test_un_budget_choisit_sa_metrique_et_l_effacer_rend_la_precedente(bureau, site_construit):
+    """« Ou mon budget suffit-il ? » : taper un budget colore la carte selon la
+    part des ventes a ce prix ou moins. « 350 » se lit en milliers d'euros."""
+
+    bureau.aller(2.35, 48.86, 10)
+    champ = bureau.page.locator("#budget")
+    champ.fill("350")
+    champ.press("Enter")
+    bureau.page.locator("#legende .titre", has_text="Part des ventes ≤ 350 000 €").wait_for(
+        timeout=ATTENTE_MS
+    )
+    assert champ.input_value() == "350 000"
+    assert bureau.page.locator("#choix-metrique").input_value() == "budget"
+    assert bureau.suivi()["metrique"] == "budget"
+    assert _parametres(bureau) == {"budget": "350000"}
+    bureau.page.wait_for_function("() => window.siteDvf.complet", timeout=ATTENTE_MS)
+
+    bureau.page.mouse.move(*bureau.point_ecran(2.33, 48.87))
+    infobulle = bureau.page.locator("#infobulle")
+    infobulle.wait_for(state="visible")
+    lignes = infobulle.inner_text()
+    assert lignes.index("Dans le budget") < lignes.index("Transactions"), "la reponse d'abord"
+    assert re.search(r"Dans le budget\s+\d+ %", lignes)
+    bureau.page.mouse.move(100, 400)
+
+    # Une autre metrique, et le budget reste en retrait ; l'effacer rend la
+    # metrique d'ouverture, et l'adresse redevient nue.
+    bureau.page.locator("#choix-metrique").select_option("prix_total_median")
+    bureau.page.locator("#legende .titre", has_text="Prix total médian").wait_for(timeout=ATTENTE_MS)
+    assert "en-retrait" in champ.get_attribute("class")
+    assert _parametres(bureau) == {"budget": "350000", "metrique": "prix_total_median"}
+    bureau.page.locator("#choix-metrique").select_option("budget")
+    bureau.page.locator("#legende .titre", has_text="Part des ventes").wait_for(timeout=ATTENTE_MS)
+    bureau.page.locator("#effacer-budget").click()
+    bureau.page.locator("#legende .titre", has_text="Prix médian au m²").wait_for(timeout=ATTENTE_MS)
+    assert champ.input_value() == ""
+    assert _parametres(bureau) == {}
+
+    # Choisie sur la carte sans budget saisi, la metrique en propose un.
+    bureau.page.locator("#choix-metrique").select_option("budget")
+    suggere = site_construit[1]["filtres"]["budget_suggere"]
+    assert champ.input_value() == f"{suggere:,}".replace(",", " ")
+    bureau.page.locator("#effacer-budget").click()
+    bureau.page.locator("#legende .titre", has_text="Prix médian au m²").wait_for(timeout=ATTENTE_MS)
+
+
+def test_une_adresse_partagee_rouvre_la_carte_telle_qu_on_la_regardait(
+    navigateur, adresse, ventes, annees
+):
+    from src.stats import classes_pieces
+
+    deux = annees[-2:]
+    page = _ouvrir(
+        navigateur,
+        adresse + f"/?budget=400000&pieces=2,3&type=appartement&annees={deux[0]},{deux[1]}"
+        "&inconnu=1#12.00/48.85000/2.35000",
+        viewport={"width": 1200, "height": 800},
+    )
+    page.page.wait_for_function(
+        "(n) => window.siteDvf.nb === n && window.siteDvf.complet",
+        arg=int(((ventes["type_bien"] == "Appartement") & classes_pieces(ventes).isin([2, 3])
+                 & ventes["annee"].isin(deux)).sum()),
+        timeout=ATTENTE_MS,
+    )
+    assert page.suivi()["metrique"] == "budget"
+    assert page.page.locator("#budget").input_value() == "400 000"
+    presses = page.page.locator("#filtre-pieces button[aria-pressed='true']").all_inner_texts()
+    assert presses == ["2", "3"]
+    assert not page.page.locator("#filtre-types input[value='Maison']").is_checked()
+    assert page.page.locator("#filtre-annees button[aria-pressed='true']").all_inner_texts() == [
+        _bouton(a) for a in deux
+    ]
+    vue = page.carte("(carte) => [carte.getZoom(), carte.getCenter().lat, carte.getCenter().lng]")
+    assert vue == pytest.approx([12, 48.85, 2.35], abs=1e-3)
+    # Le parametre inconnu est oublie ; la vue reste dans l'adresse.
+    assert page.page.evaluate("() => location.search") == (
+        f"?budget=400000&pieces=2,3&type=appartement&annees={deux[0]},{deux[1]}"
+    )
+    assert page.page.evaluate("() => location.hash") == "#12.00/48.85000/2.35000"
+    assert not page.erreurs, page.erreurs
+    page.page.context.close()
+
+
+def test_partager_copie_l_adresse_de_la_carte(navigateur, adresse):
+    page = _ouvrir(navigateur, adresse + "/?pieces=1", viewport={"width": 1200, "height": 800})
+    page.page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    bouton = page.page.locator("#partager")
+    assert bouton.is_visible()
+    bouton.click()
+    page.page.locator("#partager", has_text="Lien copié").wait_for(timeout=5000)
+    copie = page.page.evaluate("() => navigator.clipboard.readText()")
+    assert copie == page.page.evaluate("() => location.href")
+    assert copie.endswith("/?pieces=1")
+    page.page.locator("#partager", has_text="Partager").wait_for(timeout=5000)
+    page.page.context.close()
+
+
+# --------------------------------------------------------------------------
 # Telephone
 # --------------------------------------------------------------------------
 

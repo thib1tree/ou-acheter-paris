@@ -1,0 +1,105 @@
+/* Les pages par commune (`prix-immobilier/…`) : par-dessus `textes.css`, de
+ * quoi poser des chiffres — tuiles, tableaux, un graphique. Rien n'est ecrit
+ * dans le HTML : la politique de securite du site refuse les styles en ligne. */
+
+:root {
+  /* Les deux series du graphique : appartements, maisons. Teintes verifiees
+     pour se distinguer aussi en vision daltonienne, sur fond clair et sombre. */
+  --serie-1: #2a78d6;
+  --serie-2: #eb6834;
+  --grille: #e4e4e4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --serie-1: #3987e5;
+    --serie-2: #d95926;
+    --grille: #2c2c2c;
+  }
+}
+
+.fiche main { max-width: 46rem; }
+
+header { display: flex; flex-wrap: wrap; gap: 6px 20px; }
+.retour.suite { font-weight: 400; }
+
+/* ---------------------------------------------------------------- Chiffres
+   Le prix du moment, un par type de bien : c'est ce qu'on est venu lire. */
+.chiffres { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 12px;
+  margin: 20px 0 10px; }
+.chiffre { display: flex; flex-direction: column; gap: 2px; padding: 14px 16px;
+  background: var(--encart); border: 1px solid var(--trait); border-radius: 10px; }
+.chiffre .etiquette { font-size: 0.9rem; font-weight: 600; color: var(--discret); }
+.chiffre .valeur { font-size: 1.9rem; font-weight: 700; line-height: 1.2;
+  font-variant-numeric: tabular-nums; }
+.chiffre .valeur.absent { color: var(--discret); }
+.chiffre .detail { font-size: 0.9rem; color: var(--discret); line-height: 1.4; }
+
+.note { color: var(--discret); font-size: 0.9rem; }
+
+.bouton { display: inline-block; margin: 6px 0 4px; padding: 9px 16px; border-radius: 999px;
+  background: var(--rouge); color: var(--fond); font-weight: 600; text-decoration: none; }
+.bouton::after { content: " →"; }
+.bouton:hover, .bouton:focus-visible { text-decoration: underline; }
+
+/* ---------------------------------------------------------------- Tableaux */
+.tableau { overflow-x: auto; margin: 12px 0 16px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+caption { caption-side: bottom; text-align: left; padding-top: 8px; color: var(--discret);
+  font-size: 0.85rem; line-height: 1.4; }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--trait); text-align: left;
+  vertical-align: baseline; }
+thead th { font-size: 0.85rem; font-weight: 600; color: var(--discret);
+  border-bottom-color: var(--discret); white-space: nowrap; }
+tbody th { font-weight: 400; }
+.n { text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { padding-left: 0; }
+th:last-child, td:last-child { padding-right: 0; }
+.section { color: var(--discret); font-size: 0.85rem; white-space: nowrap; }
+
+/* --------------------------------------------------------------- Graphique */
+figure { margin: 14px 0 6px; }
+figcaption { color: var(--discret); font-size: 0.85rem; line-height: 1.4; margin-top: 4px; }
+.graphique { display: block; width: 100%; max-width: 620px; height: auto; }
+.graphique .grille { stroke: var(--grille); stroke-width: 1; }
+.graphique .axe { fill: var(--discret); font-size: 14px; font-variant-numeric: tabular-nums; }
+.graphique .valeur { fill: var(--texte); font-size: 14px; font-weight: 600;
+  font-variant-numeric: tabular-nums; }
+.graphique .ligne { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+/* Un anneau de la couleur du fond detache le point de la ligne qui le traverse. */
+.graphique .point { stroke: var(--fond); stroke-width: 2; }
+.graphique .ligne.s1 { stroke: var(--serie-1); }
+.graphique .ligne.s2 { stroke: var(--serie-2); }
+.graphique .point.s1 { fill: var(--serie-1); }
+.graphique .point.s2 { fill: var(--serie-2); }
+.legende { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 0.9rem; margin-bottom: 4px; }
+.legende span { display: inline-flex; align-items: center; gap: 7px; }
+.legende .cle { width: 18px; height: 0; border-top: 3px solid; border-radius: 2px; }
+.legende .cle.s1 { border-color: var(--serie-1); }
+.legende .cle.s2 { border-color: var(--serie-2); }
+
+/* ------------------------------------------------------------------ Listes */
+.gares { padding-left: 20px; }
+.communes { list-style: none; padding: 0; margin: 12px 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 8px 20px; }
+.communes li { margin: 0; padding: 8px 0; border-bottom: 1px solid var(--trait); }
+.communes a { font-weight: 600; }
+.communes .detail { display: block; color: var(--discret); font-size: 0.85rem; }
+
+.sommaire { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 16px 0 4px; }
+
+tbody th { white-space: nowrap; }
+/* Le nom d'un quartier, lui, est une liste de rues : il passe a la ligne. */
+details tbody th { white-space: normal; }
+
+@media (max-width: 30rem) {
+  .chiffre .valeur { font-size: 1.6rem; }
+  table { font-size: 0.875rem; }
+  th, td { padding: 7px 4px; }
+}
+
+/* Le tableau des quartiers, replie : une centaine de lignes dans une grande
+   commune. */
+details { margin: 12px 0 16px; }
+summary { cursor: pointer; color: var(--rouge); font-weight: 600; padding: 6px 0; }
+summary:hover, summary:focus-visible { text-decoration: underline; }

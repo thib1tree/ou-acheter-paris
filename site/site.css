@@ -103,7 +103,12 @@ body {
 #alertes .alerte { background: #fff4e5; border: 1px solid #f0c27b; border-radius: 6px;
   padding: 8px 10px; margin-bottom: 12px; font-size: 13px; line-height: 1.4; }
 
-#a-propos { margin-top: 20px; font-size: 13px; color: #444; line-height: 1.45; }
+#lien-communes { margin: 20px 0 0; font-size: 13px; }
+#lien-communes a { color: var(--rouge); font-weight: 600; text-decoration: none; }
+#lien-communes a::after { content: " →"; }
+#lien-communes a:hover, #lien-communes a:focus-visible { text-decoration: underline; }
+
+#a-propos { margin-top: 10px; font-size: 13px; color: #444; line-height: 1.45; }
 #a-propos summary { cursor: pointer; color: var(--discret); }
 
 #zone-carte { grid-area: carte; position: relative; overflow: hidden; min-height: 0; }

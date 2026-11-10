@@ -12,6 +12,8 @@ Ce que le script ecrit :
     index.html, site.css, app.js, calcul.js,   la page et la carte MapLibre,
     calcul-worker.js, carte/                   copiees telles quelles de `site/`
     mentions-legales.html, textes.css          mentions legales et confidentialite
+    prix-immobilier/, fiches.css               une page par commune, et leur liste :
+      index.html, <commune>/index.html         des statistiques, jamais une vente
     manifeste.json                             ce que la page lit en premier
     donnees/                                   les donnees, nommees par leur empreinte
       sections-*.json, communes-*.json         contours simplifies
@@ -49,7 +51,7 @@ from pathlib import Path
 RACINE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RACINE))
 
-from src import binaire, charge, geo, points, territoires  # noqa: E402
+from src import binaire, charge, fiches, geo, pages, points, territoires  # noqa: E402
 from src.ingestion import (  # noqa: E402
     OptionsNettoyage,
     construire_transactions_territoire,
@@ -298,12 +300,18 @@ def valeurs_page(cle: str, transactions, bornes) -> dict[str, str]:
         "prix_max": _milliers(options.prix_m2_max),
         "surface_min": f"{options.surface_min:g}",
         "ventes_min": str(charge.SEUIL_GRISAGE + 1),
+        "seuil_pages": str(fiches.SEUIL_PUBLICATION),
         "json_ld": texte_ld,
     }
 
 
-def ecrire_referencement(sortie: Path, adresse: str | None, jour: str) -> None:
-    """`robots.txt`, et le plan du site quand son adresse publique est connue."""
+def ecrire_referencement(
+    sortie: Path, adresse: str | None, jour: str, chemins: tuple[str, ...] = ()
+) -> None:
+    """`robots.txt`, et le plan du site quand son adresse publique est connue.
+
+    `chemins` : les pages a citer en plus de l'accueil (celles des communes).
+    """
 
     robots = ROBOTS
     if adresse:
@@ -311,11 +319,78 @@ def ecrire_referencement(sortie: Path, adresse: str | None, jour: str) -> None:
         (sortie / "sitemap.xml").write_text(
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-            f"  <url><loc>{adresse}</loc><lastmod>{jour}</lastmod></url>\n"
-            "</urlset>\n",
+            + "".join(
+                f"  <url><loc>{adresse}{chemin}</loc><lastmod>{jour}</lastmod></url>\n"
+                for chemin in ("", *chemins)
+            )
+            + "</urlset>\n",
             encoding="utf-8",
         )
     (sortie / "robots.txt").write_text(robots, encoding="utf-8")
+
+
+def ecrire_pages_communes(
+    sortie: Path,
+    transactions,
+    voies: dict[str, str],
+    gares: list[dict],
+    contours_communes: dict,
+    noms: dict[str, str],
+    bornes,
+    adresse: str | None,
+    jour: str,
+) -> tuple[str, ...]:
+    """Une page par commune, et leur liste ; rend leurs chemins dans le site.
+
+    Une commune dont aucune statistique n'est publiable (moins de
+    `fiches.SEUIL_PUBLICATION` ventes en cinq ans) n'a pas de page : elle
+    n'aurait rien a dire.
+    """
+
+    toutes = {
+        code: fiche for code, fiche in fiches.fiches(transactions, voies).items()
+        if fiche["n"] >= fiches.SEUIL_PUBLICATION and code in noms
+    }
+    identifiants = fiches.identifiants({code: noms[code] for code in toutes})
+    ancres = geo.points_representatifs(contours_communes, CLE_COMMUNE)
+    proches = fiches.communes_proches({c: a for c, a in ancres.items() if c in toutes})
+    gares_des_communes = geo.gares_par_zone(gares, contours_communes, CLE_COMMUNE)
+    communes = {
+        code: {
+            "code": code,
+            "nom": noms[code],
+            "identifiant": identifiants[code],
+            "fiche": fiche,
+            # Les gares lourdes d'abord, comme sur la carte, puis par nom.
+            "gares": sorted(
+                gares_des_communes.get(code, []), key=lambda g: (-geo.rang_gare(g), str(g.get("nom")))
+            ),
+            "ancre": ancres[code][:2] if code in ancres else None,
+        }
+        for code, fiche in toutes.items()
+    }
+    for code, commune in communes.items():
+        commune["proches"] = [communes[voisine] for voisine in proches.get(code, [])]
+
+    contexte = {
+        "nom_site": NOM_SITE,
+        "adresse": adresse,
+        "debut": bornes[0],
+        "fin": bornes[1],
+        "url_jeu": charge.URL_JEU_DE_DONNEES,
+        "url_licence": charge.URL_LICENCE,
+        "jour": f"{dt.date.fromisoformat(jour):%d/%m/%Y}",
+    }
+    dossier = sortie / pages.DOSSIER
+    for commune in communes.values():
+        (dossier / commune["identifiant"]).mkdir(parents=True)
+        (dossier / commune["identifiant"] / "index.html").write_text(
+            pages.page_commune(commune, contexte), encoding="utf-8"
+        )
+    (dossier / "index.html").write_text(
+        pages.page_liste(list(communes.values()), contexte), encoding="utf-8"
+    )
+    return (f"{pages.DOSSIER}/", *sorted(f"{pages.DOSSIER}/{c['identifiant']}/" for c in communes.values()))
 
 
 def adresse_publique(brute: str | None) -> str | None:
@@ -433,11 +508,21 @@ def construire(cle: str, sortie: Path, adresse: str | None = None) -> dict:
     jeton = points.jeton(_empreinte(contenu), boite)
     fichiers["points"] = "donnees/" + points.publier(transactions, jeton, str(donnees), boite)
 
-    # ---------------- Manifeste ----------------
+    # ---------------- Pages par commune ----------------
     bornes = charge.periode(transactions)
+    genere_le = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    chemins_pages: tuple[str, ...] = ()
+    if bornes:
+        journal("→ Pages par commune")
+        chemins_pages = ecrire_pages_communes(
+            sortie, transactions, reperes, gares, contours_communes, noms, bornes, adresse,
+            genere_le[:10],
+        )
+
+    # ---------------- Manifeste ----------------
     manifeste = {
         "version": 1,
-        "genere_le": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "genere_le": genere_le,
         "territoire": cle,
         "source": {
             "url": charge.URL_JEU_DE_DONNEES,
@@ -447,6 +532,8 @@ def construire(cle: str, sortie: Path, adresse: str | None = None) -> dict:
         "periode": {"debut": f"{bornes[0]:%Y-%m-%d}", "fin": f"{bornes[1]:%Y-%m-%d}"} if bornes else None,
         "nb_ventes": int(len(transactions)),
         "sections_sans_contour": len(orphelines),
+        # La liste des communes, et le nombre de pages qu'elle designe.
+        "pages": {"communes": f"{pages.DOSSIER}/", "nombre": max(len(chemins_pages) - 1, 0)},
         "fichiers": fichiers,
         "filtres": {
             "annees": charge.annees_disponibles(transactions),
@@ -462,7 +549,7 @@ def construire(cle: str, sortie: Path, adresse: str | None = None) -> dict:
     }
     (sortie / "manifeste.json").write_text(_json(manifeste), encoding="utf-8")
     ecrire_page(sortie, valeurs_page(cle, transactions, bornes), adresse)
-    ecrire_referencement(sortie, adresse, manifeste["genere_le"][:10])
+    ecrire_referencement(sortie, adresse, manifeste["genere_le"][:10], chemins_pages)
 
     nombre, plus_gros = verifier_limites(sortie)
     journal(f"✓ {sortie} : {nombre} fichiers (plafond {PLAFOND_FICHIERS}), "

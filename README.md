@@ -7,6 +7,11 @@ où acheter : prix au m² par commune et par quartier, chaque vente une à une e
 évolution des prix, et les gares actuelles et à venir (Grand Paris Express, tramways,
 RER).
 
+Chaque commune a aussi sa page en texte,
+[« Prix de l'immobilier à… »](https://www.ou-acheter-paris.fr/prix-immobilier/) : prix
+médian des douze derniers mois, évolution, prix par taille de logement et par quartier,
+gares, communes proches. Ce sont elles que lisent les moteurs de recherche.
+
 Gratuit, sans publicité, sans compte, sans cookie ni mesure d'audience. Voir les
 [mentions légales et la confidentialité](site/mentions-legales.html).
 
@@ -45,11 +50,18 @@ sans serveur.
 
 ```
 site/      la page : carte, filtres, calcul dans le navigateur
-src/       préparation des données : nettoyage, statistiques, contours, gares
+src/       préparation des données : nettoyage, statistiques, contours, gares,
+           pages par commune (`fiches.py` pour les chiffres, `pages.py` pour le HTML)
 scripts/   construction du site et mises à jour
 data/      ventes nettoyées, contours, gares
 tests/     tests Python, navigateur et cohérence Python / JavaScript
 ```
+
+Les pages par commune (`prix-immobilier/<commune>/`) sont écrites à la construction,
+sans JavaScript, à partir des mêmes ventes que la carte : elles se mettent donc à jour
+avec elle, sans rien à maintenir. Elles ne publient que des statistiques — jamais une
+vente, et aucun chiffre sur moins de 11 ventes — et ne classent ni ne notent les
+communes. Le plan du site (`sitemap.xml`) les cite toutes.
 
 ## Lancer le site chez soi
 

@@ -880,6 +880,64 @@ def test_la_metrique_se_choisit_sur_la_carte_et_recolore_tout(bureau, annees):
 
 
 # --------------------------------------------------------------------------
+# Pages par commune
+# --------------------------------------------------------------------------
+
+
+def test_une_page_de_commune_s_affiche_sous_la_politique_de_securite_et_mene_a_la_carte(
+    navigateur, site_construit
+):
+    """De la carte a la liste, de la liste a une commune, et retour sur la
+    carte, cadree sur la commune. Servies avec leurs vrais en-tetes : le
+    graphique et les tableaux ne doivent rien demander que la politique de
+    securite refuse."""
+
+    from conftest import servir
+
+    with servir(site_construit[0]) as adresse:
+        session = navigateur.new_context(viewport={"width": 390, "height": 844})
+        session.route(re.compile(r"^https?://(?!127\.0\.0\.1|localhost)"), lambda route: route.abort())
+        page = session.new_page()
+        violations: list[str] = []
+        page.on("console", lambda m: violations.append(m.text) if "Content Security Policy" in m.text else None)
+        page.on("pageerror", lambda erreur: violations.append(str(erreur)))
+        page.add_init_script(
+            "document.addEventListener('securitypolicyviolation', (e) => "
+            "console.error('Content Security Policy : ' + e.violatedDirective + ' ' + e.blockedURI))"
+        )
+
+        page.goto(adresse)
+        assert page.locator("#lien-communes a").get_attribute("href") == "prix-immobilier/"
+        page.goto(adresse + "prix-immobilier/")
+        page.locator("main a", has_text="Montreuil").first.click()
+        page.wait_for_url("**/prix-immobilier/montreuil/")
+        assert page.locator("h1").inner_text() == "Prix de l'immobilier à Montreuil"
+
+        # Le graphique est dessine, a la couleur de sa feuille de style, et la
+        # page ne deborde pas d'un telephone.
+        ligne = page.locator("svg.graphique polyline.s1").first
+        assert ligne.evaluate("(e) => getComputedStyle(e).stroke") == "rgb(42, 120, 214)"
+        assert page.locator("svg.graphique circle").count() >= 4
+        assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
+        # Le tableau des quartiers attend qu'on le demande.
+        quartiers = page.locator("details table")
+        assert not quartiers.is_visible()
+        page.locator("details summary").click()
+        assert quartiers.is_visible()
+
+        page.locator("a.bouton").click()
+        page.wait_for_function(
+            "() => !!(window.carteDvf && window.carteDvf.isStyleLoaded())", timeout=ATTENTE_MS
+        )
+        vue = page.evaluate(
+            "() => [window.carteDvf.getZoom(), window.carteDvf.getCenter().lat, window.carteDvf.getCenter().lng]"
+        )
+        assert vue == pytest.approx([13, 48.86, 2.44], abs=0.03)
+        session.close()
+    assert not violations, violations
+
+
+# --------------------------------------------------------------------------
 # Telephone
 # --------------------------------------------------------------------------
 

@@ -4,8 +4,9 @@
     python scripts/verifier_deploiement.py https://<projet>.pages.dev
 
 Lance par le workflow de deploiement juste apres `wrangler pages deploy`. Il
-echoue si la page, les mentions legales ou le manifeste ne repondent pas, ou
-si un fichier que le manifeste designe manque. Il ecrit aussi, en Markdown, les en-tetes que
+echoue si la page, les mentions legales ou le manifeste ne repondent pas, si
+un fichier que le manifeste designe manque, ou si les pages par commune ne
+sont pas servies. Il ecrit aussi, en Markdown, les en-tetes que
 Cloudflare pose reellement (compression, cache) : ce sont des comportements
 de l'hebergeur que la documentation ne garantit pas dans le detail, et qu'il
 vaut mieux constater que supposer.
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -116,6 +118,17 @@ def main(racine: str) -> int:
         statut, _, _ = lire(f"{racine}/{fichiers[nom]}")
         if statut != 200:
             raise SystemExit(f"{fichiers[nom]} : HTTP {statut}")
+
+    # Les pages par commune : la liste, autant de liens que de pages
+    # annoncees, et la premiere d'entre elles, servie a son adresse en `/`.
+    pages = manifeste.get("pages") or {}
+    if pages.get("nombre"):
+        liste = constater(pages["communes"]).decode("utf-8", "replace")
+        liens = re.findall(r'<a href="([a-z0-9-]+)/">', liste)
+        if len(liens) != pages["nombre"]:
+            raise SystemExit(f"Liste des communes : {len(liens)} liens pour {pages['nombre']} pages.")
+        if "Prix de l'immobilier" not in constater(f"{pages['communes']}{liens[0]}/").decode("utf-8", "replace"):
+            raise SystemExit("La page d'une commune n'est pas servie.")
 
     periode = manifeste.get("periode") or {}
     lignes += ["", f"Données du {periode.get('debut')} au {periode.get('fin')}, "

@@ -634,6 +634,38 @@ def gares_dans_sections(
     return retenues
 
 
+def gares_par_zone(
+    gares: list[dict[str, Any]], geojson: dict[str, Any], cle: str = "code_commune"
+) -> dict[str, list[dict[str, Any]]]:
+    """Les gares rangees par zone (`code -> gares`), dans l'ordre recu.
+
+    Une gare n'appartient qu'a la zone qui la contient : celle qui est posee
+    a cheval sur une limite communale revient a la premiere trouvee, et une
+    gare hors de tout contour n'est rangee nulle part.
+    """
+
+    boites = []
+    for entite in geojson.get("features") or []:
+        code = (entite.get("properties") or {}).get(cle)
+        boite = etendue({"features": [entite]})
+        if code and boite:
+            boites.append((str(code), boite, entite))
+
+    rangees: dict[str, list[dict[str, Any]]] = {}
+    for gare in gares:
+        try:
+            lon, lat = float(gare["longitude"]), float(gare["latitude"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        for code, boite, entite in boites:
+            if not (boite[0] <= lat <= boite[2] and boite[1] <= lon <= boite[3]):
+                continue
+            if _point_dans_entite(lon, lat, entite):
+                rangees.setdefault(code, []).append(gare)
+                break
+    return rangees
+
+
 # --------------------------------------------------------------------------
 # Gares — strictement non bloquant
 # --------------------------------------------------------------------------
